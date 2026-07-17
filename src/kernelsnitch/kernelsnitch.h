@@ -22,7 +22,9 @@
 #ifndef KS_PAGE_SIZE
 #define KS_PAGE_SIZE PAGE_SIZE
 #endif
+#ifndef APPENDED_FUTEXES
 #define APPENDED_FUTEXES 4096
+#endif
 #define MULITPLE 4
 #ifndef KERNELSNITCH_IDENTITY_START
 #define KERNELSNITCH_IDENTITY_START 0xffffff8000000000ULL
@@ -121,8 +123,12 @@ static void __increase(struct kernelsnitch_shared_state *ks, size_t id, size_t a
 /**
  * Simple compare
  */
+#ifndef REPEAT_MEASUREMENT
 #define REPEAT_MEASUREMENT 128
+#endif
+#ifndef AVERAGE
 #define AVERAGE (1<<3)
+#endif
 static int __compare(const void *a, const void *b)
 {
     return (*(size_t *)a - *(size_t *)b);

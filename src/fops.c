@@ -1,6 +1,10 @@
 #include "common.h"
 
+#if defined(APP_PAYLOAD) && APP_PAYLOAD
+#define PSELECT_CFI_ROUTE_ATTEMPTS 6
+#else
 #define PSELECT_CFI_ROUTE_ATTEMPTS 1
+#endif
 
 atomic_int cfi_stage_done;
 ssize_t cfi_write_ret = -1;
@@ -30,7 +34,17 @@ static int route_delay_usec(int attempt) {
     errno = 0;
     long value = strtol(forced, &end, 0);
     if (!errno && end != forced && !*end && value >= 0 && value <= 1000000) {
+#if defined(APP_PAYLOAD) && APP_PAYLOAD
+      static const int offsets[] = {
+        0, 40000, 10000, 30000, -5000, 20000,
+      };
+      size_t index = (size_t)(attempt - 1) %
+                     (sizeof(offsets) / sizeof(offsets[0]));
+      long adjusted = value + offsets[index];
+      return adjusted < 0 ? 0 : (int)adjusted;
+#else
       return (int)value;
+#endif
     }
   }
   static const int delays[] = {
