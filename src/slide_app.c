@@ -502,6 +502,7 @@ static int slide_commit_stext(uint64_t stext, const char *source) {
   kaslr_slide = slide;
   slide_p0_offset = slide;
   kaslr_done = 1;
+  app_publish_p0_offset(slide_p0_offset);
   pr_success("slide-kaslr-ok source=%s pid=%d base=%016llx "
              "slide=%016llx\n",
              source, getpid(), (unsigned long long)kaslr_base,

