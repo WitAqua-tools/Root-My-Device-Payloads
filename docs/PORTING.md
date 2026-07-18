@@ -263,10 +263,11 @@ For this target, the embedded and standalone KO reports:
 ## 8. Publish the support feed
 
 Add an exact entry to `support/targets-v2.json`, including the target's literal
-`uname -r` value as `kernelRelease`, update artifact sizes, and sign the final
-JSON with the existing Ed25519 manifest key. Verify the signature with the
-public key compiled into Root My Galaxy. Never add the private key to the
-repository.
+`uname -r` value as `kernelRelease` and complete `/proc/version` string as
+`kernelVersion`. Do not invent a suffix when a vendor kernel exposes a short
+release string. Update artifact sizes and sign the final JSON with the existing
+Ed25519 manifest key. Verify the signature with the public key compiled into
+Root My Galaxy. Never add the private key to the repository.
 
 ## 9. Cleanup policy
 
