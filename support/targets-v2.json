@@ -39,7 +39,29 @@
         "size": 104128
       },
       "kernelsu": {
-        "url": "https://raw.githubusercontent.com/BuSung-dev/Root-My-Galaxy-Payloads/main/kernelsu/ksud-s24fe-android14-6.1-kdp",
+        "url": "https://raw.githubusercontent.com/BuSung-dev/Root-My-Galaxy-Payloads/main/kernelsu/ksud-samsung-android14-6.1-kdp",
+        "size": 6532168,
+        "kmi": "android14-6.1",
+        "managerPackage": "me.weishu.kernelsu"
+      }
+    },
+    {
+      "profileId": "e1s-S921BXXSFDZF2",
+      "manufacturer": "samsung",
+      "model": "SM-S921B",
+      "device": "e1s",
+      "kernelRelease": "6.1.157-android14-11",
+      "buildDisplay": "BP4A.251205.006.S921BXXSFDZF2",
+      "buildFingerprint": "samsung/e1sxxx/essi:16/BP4A.251205.006/S921BXXSFDZF2:user/release-keys",
+      "sdk": 36,
+      "abi": "arm64-v8a",
+      "pageSize": 4096,
+      "exploit": {
+        "url": "https://raw.githubusercontent.com/BuSung-dev/Root-My-Galaxy-Payloads/main/artifacts/e1s-S921BXXSFDZF2/cve-2026-43499-app.so",
+        "size": 104128
+      },
+      "kernelsu": {
+        "url": "https://raw.githubusercontent.com/BuSung-dev/Root-My-Galaxy-Payloads/main/kernelsu/ksud-samsung-android14-6.1-kdp",
         "size": 6532168,
         "kmi": "android14-6.1",
         "managerPackage": "me.weishu.kernelsu"

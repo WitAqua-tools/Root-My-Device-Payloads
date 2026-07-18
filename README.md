@@ -17,6 +17,7 @@ It intentionally does not contain Android application source code.
 | --- | --- | --- | --- | --- |
 | `pa3q-S938NKSUACZF1` | Galaxy S25 Ultra `SM-S938N` | `BP4A.251205.006.S938NKSUACZF1` | `android15-6.6` | Device-tested |
 | `essi-S721NKSSCDZF3` | Galaxy S24 FE `SM-S721N` | `BP4A.251205.006.S721NKSSCDZF3` | `6.1.157-android14-11` / `android14-6.1` | Static analysis and build verified; device-untested |
+| `e1s-S921BXXSFDZF2` | Galaxy S24 `SM-S921B` | `BP4A.251205.006.S921BXXSFDZF2` | `6.1.157-android14-11` / `android14-6.1` | Static analysis and build verified; device-untested |
 
 Profiles are exact-firmware profiles. A matching model with a different build
 is not equivalent and must be ported separately.
@@ -42,6 +43,7 @@ The signing private key is not stored in this repository.
 ```sh
 make TARGET=pa3q-S938NKSUACZF1 ANDROID_NDK_HOME=/path/to/android-ndk
 make TARGET=essi-S721NKSSCDZF3 ANDROID_NDK_HOME=/path/to/android-ndk
+make TARGET=e1s-S921BXXSFDZF2 ANDROID_NDK_HOME=/path/to/android-ndk
 ```
 
 Outputs:
@@ -61,5 +63,7 @@ make TARGET=essi-S721NKSSCDZF3 ANDROID_NDK_HOME=/path/to/android-ndk release
 The complete firmware-to-profile procedure is recorded in
 [`docs/PORTING.md`](docs/PORTING.md). Samsung-specific KernelSU changes and
 versioned artifacts are documented in [`kernelsu/README.md`](kernelsu/README.md).
+The exact S921B DZF2 analysis is recorded separately in
+[`docs/SM-S921B-S921BXXSFDZF2.md`](docs/SM-S921B-S921BXXSFDZF2.md).
 
 Use only on devices you own or are explicitly authorized to test.

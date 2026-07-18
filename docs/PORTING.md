@@ -1,7 +1,10 @@
 # Firmware-to-profile porting procedure
 
 This document records the exact procedure used for the Galaxy S24 FE Korean
-firmware `S721NKSSCDZF3`. Do not reuse its values for another build.
+firmware `S721NKSSCDZF3`. Do not reuse its values for another build. The
+separate Galaxy S24 `S921BXXSFDZF2` record, including every changed offset and
+firmware hash, is in
+[`SM-S921B-S921BXXSFDZF2.md`](SM-S921B-S921BXXSFDZF2.md).
 
 ## 1. Identify the exact firmware
 
