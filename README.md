@@ -21,6 +21,10 @@ It intentionally does not contain Android application source code.
 Profiles are exact-firmware profiles. A matching model with a different build
 is not equivalent and must be ported separately.
 
+Root My Galaxy groups and filters profiles by the exact `uname -r` kernel
+release. Model and device fields are descriptive metadata; build display ID,
+SDK, ABI, and page size remain part of automatic profile selection.
+
 The port is based on the exploit source published at
 <https://github.com/NebuSec/CyberMeowfia/tree/main/IonStack/CVE-2026-43499/exploit>.
 
