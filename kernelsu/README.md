@@ -10,14 +10,15 @@ between KMIs.
 | --- | --- | --- | --- |
 | `android15-6.6_kernelsu-s25u-kdp.ko` | `SM-S938N`, `S938NKSUACZF1` | `android15-6.6` | Standalone reference module from the previously deployed S25U build |
 | `ksud-s25u-kdp` | `SM-S938N`, `S938NKSUACZF1` | `android15-6.6` | Late-load binary embedding the 6.6 module |
-| `android14-6.1_kernelsu-s24fe-kdp.ko` | `SM-S721N`, `S721NKSSCDZF3` | `android14-6.1` | Standalone reference module with target `vermagic` |
-| `ksud-s24fe-android14-6.1-kdp` | `SM-S721N`, `S721NKSSCDZF3` | `android14-6.1` | Late-load binary embedding the 6.1 module |
+| `android14-6.1_kernelsu-samsung-kdp.ko` | `SM-S721N` `S721NKSSCDZF3`; `SM-S921B` `S921BXXSFDZF2` | `android14-6.1` | Standalone Samsung KDP/RKP/DEFEX module with target `vermagic` |
+| `ksud-samsung-android14-6.1-kdp` | Same verified 6.1 targets | `android14-6.1` | Late-load binary embedding the 6.1 module |
 
 The standalone `.ko` files are retained for auditing. Root My Galaxy downloads
 the corresponding `ksud-*` file because `ksud late-load` loads its embedded
 `<kmi>_kernelsu.ko` asset.
 
-The S24 FE files are build-verified but have not been run on that device.
+The 6.1 files are build-verified but have not been run on either listed 6.1
+device.
 
 ## Why the stock module crashes on Samsung
 
@@ -72,7 +73,9 @@ assumptions:
   dependency on a DDK-specific exported-symbol CRC.
 
 Both function prototypes were verified against the S24 FE kernel BTF before
-building.
+building. The same prototypes and every module-required symbol were then
+checked against the recovered S921B DZF2 BTF and `vmlinux.elf` before sharing
+the 6.1 artifact between the two profiles.
 
 ## Rebuild
 
@@ -83,7 +86,7 @@ git checkout v3.2.5
 git apply KernelSU-v3.2.5-samsung-kdp-rkp-defex.patch
 ```
 
-For the S24 FE module, use DDK image
+For the Samsung 6.1 module, use DDK image
 `ghcr.io/ylarod/ddk-min:android14-6.1-20260313` and set:
 
 ```sh
@@ -128,6 +131,7 @@ stripping:
 
 ```sh
 kernel/check_symbol kernel/kernelsu.ko /path/to/S721NKSSCDZF3/vmlinux.elf
+kernel/check_symbol kernel/kernelsu.ko /path/to/S921BXXSFDZF2/vmlinux.elf
 llvm-strip -d kernel/kernelsu.ko
 ```
 
