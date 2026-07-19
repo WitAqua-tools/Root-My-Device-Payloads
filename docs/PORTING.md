@@ -5,6 +5,9 @@ firmware `S721NKSSCDZF3`. Do not reuse its values for another build. The
 separate Galaxy S24 `S921BXXSFDZF2` record, including every changed offset and
 firmware hash, is in
 [`SM-S921B-S921BXXSFDZF2.md`](SM-S921B-S921BXXSFDZF2.md).
+The no-BTF Android 5.10 procedure and legacy `rt_mutex_waiter` layout are
+recorded separately in
+[`SM-A155N-A155NKSS6BYH1.md`](SM-A155N-A155NKSS6BYH1.md).
 
 ## 1. Identify the exact firmware
 
@@ -250,8 +253,9 @@ module build, perform all of these checks:
 3. inspect the target kernel configuration for `CONFIG_MODULE_FORCE_LOAD` and
    `CONFIG_MODVERSIONS`;
 4. make `modinfo` report the exact target `vermagic`;
-5. strip debug sections, embed the resulting KO as
-   `android14-6.1_kernelsu.ko`, and rebuild `ksud`;
+5. strip debug sections, embed the resulting KO as the exact KMI asset (for
+   example, `android14-6.1_kernelsu.ko` or
+   `android12-5.10_kernelsu.ko`), and rebuild `ksud`;
 6. name both published files with their kernel/KMI version.
 
 For this target, the embedded and standalone KO reports:
@@ -259,6 +263,19 @@ For this target, the embedded and standalone KO reports:
 ```text
 6.1.157-android14-11 SMP preempt mod_unload modversions aarch64
 ```
+
+For a no-BTF Samsung 5.10 target with `CONFIG_TRIM_UNUSED_KSYMS=y`, follow the
+A155N procedure in [`SM-A155N-A155NKSS6BYH1.md`](SM-A155N-A155NKSS6BYH1.md).
+Build with `KBUILD_MODPOST_WARN=1`, keep `.symtab` and `.strtab`, and require a
+zero-length `__versions` section so KernelSU's late loader can relocate every
+undefined symbol from `/proc/kallsyms`. Do not copy a `Module.symvers` from a
+different GKI build.
+
+`kernelsu/tools/extract_target_symvers.py` can recover the exact exported
+symbol CRC table from a reconstructed little-endian ARM64 `vmlinux`. Use it to
+audit export order and CRCs or to prepare a conventional exported-symbol-only
+module. It is not a substitute for the manual-relocation build when KernelSU
+depends on symbols trimmed from the target export table.
 
 ## 8. Publish the support feed
 

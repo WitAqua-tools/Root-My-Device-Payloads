@@ -69,6 +69,29 @@
         "kmi": "android14-6.1",
         "managerPackage": "me.weishu.kernelsu"
       }
+    },
+    {
+      "profileId": "a15-A155NKSS6BYH1",
+      "manufacturer": "samsung",
+      "model": "SM-A155N",
+      "device": "a15",
+      "kernelRelease": "5.10.226-android12-9-31117096",
+      "kernelVersion": "Linux version 5.10.226-android12-9-31117096 (build-user@build-host) (Android (7284624, based on r416183b) clang version 12.0.5 (https://android.googlesource.com/toolchain/llvm-project c935d99d7cf2016289302412d708641d52d2f7ee), LLD 12.0.5 (/buildbot/src/android/llvm-toolchain/out/llvm-project/lld c935d99d7cf2016289302412d708641d52d2f7ee)) #1 SMP PREEMPT Thu Jul 31 00:05:14 UTC 2025",
+      "buildDisplay": "AP3A.240905.015.A2.A155NKSS6BYH1",
+      "buildFingerprint": "samsung/a15ks/a15:15/AP3A.240905.015.A2/A155NKSS6BYH1:user/test-keys",
+      "sdk": 35,
+      "abi": "arm64-v8a",
+      "pageSize": 4096,
+      "exploit": {
+        "url": "https://raw.githubusercontent.com/BuSung-dev/Root-My-Galaxy-Payloads/main/artifacts/a15-A155NKSS6BYH1/cve-2026-43499-app.so",
+        "size": 104128
+      },
+      "kernelsu": {
+        "url": "https://raw.githubusercontent.com/BuSung-dev/Root-My-Galaxy-Payloads/main/kernelsu/ksud-samsung-android12-5.10-kdp",
+        "size": 6649032,
+        "kmi": "android12-5.10",
+        "managerPackage": "me.weishu.kernelsu"
+      }
     }
   ]
 }

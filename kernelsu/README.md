@@ -12,13 +12,15 @@ between KMIs.
 | `ksud-s25u-kdp` | `SM-S938N`, `S938NKSUACZF1` | `android15-6.6` | Late-load binary embedding the 6.6 module |
 | `android14-6.1_kernelsu-samsung-kdp.ko` | `SM-S721N` `S721NKSSCDZF3`; `SM-S921B` `S921BXXSFDZF2` | `android14-6.1` | Standalone Samsung KDP/RKP/DEFEX module with target `vermagic` |
 | `ksud-samsung-android14-6.1-kdp` | Same verified 6.1 targets | `android14-6.1` | Late-load binary embedding the 6.1 module |
+| `android12-5.10_kernelsu-samsung-kdp.ko` | `SM-A155N` `A155NKSS6BYH1` | `android12-5.10` | Standalone Samsung KDP/RKP/DEFEX module built against the exact A15 kernel |
+| `ksud-samsung-android12-5.10-kdp` | `SM-A155N` `A155NKSS6BYH1` | `android12-5.10` | Late-load binary embedding the 5.10 module |
 
 The standalone `.ko` files are retained for auditing. Root My Galaxy downloads
 the corresponding `ksud-*` file because `ksud late-load` loads its embedded
 `<kmi>_kernelsu.ko` asset.
 
 The 6.1 files are build-verified but have not been run on either listed 6.1
-device.
+device. The 5.10 files are also build-verified and device-untested.
 
 ## Why the stock module crashes on Samsung
 
@@ -76,6 +78,22 @@ Both function prototypes were verified against the S24 FE kernel BTF before
 building. The same prototypes and every module-required symbol were then
 checked against the recovered S921B DZF2 BTF and `vmlinux.elf` before sharing
 the 6.1 artifact between the two profiles.
+
+## 5.10 generalization
+
+Samsung 5.10 predates the `cred->ucounts` RLIMIT conversion used by the 6.1
+build. Its native `commit_creds()` updates `cred->user->processes` directly.
+The patch selects that sequence below Linux 5.11 and keeps the existing
+`inc_rlimit_ucounts()` / `dec_rlimit_ucounts()` path for later kernels.
+
+The A15 kernel also enables `CONFIG_TRIM_UNUSED_KSYMS`. The matching `ksud`
+uses KernelSU's existing manual-relocation loader: it replaces undefined ELF
+symbols with absolute `/proc/kallsyms` addresses before `init_module`. The KO
+therefore has a zero-length `__versions` section, as required by
+`kernel/check_symbol`, while preserving `.symtab` and `.strtab`. All 208
+undefined imports were checked against the recovered A15 `vmlinux`; the KDP,
+DEFEX, syscall-table, and kprobe symbols resolved by name were checked
+separately.
 
 ## Rebuild
 
@@ -155,3 +173,62 @@ $env:CC_aarch64_linux_android = "$ndkBin\aarch64-linux-android35-clang.cmd"
 $env:AR_aarch64_linux_android = "$ndkBin\llvm-ar.exe"
 cargo build --release --target aarch64-linux-android -p ksud
 ```
+
+## Rebuild the A155N 5.10 artifact
+
+Use the exact `A155NKSS6BYH1` IKCONFIG and Samsung source commit
+`5074ff414f1b835fba113b71175d4f217b1cdc39`. Prepare the target tree with the
+same compiler target from the first configuration step:
+
+```sh
+cp target.config out/.config
+scripts/config --file out/.config \
+  --set-str UNUSED_KSYMS_WHITELIST /path/to/abi_symbollist.raw
+make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 \
+  CROSS_COMPILE=aarch64-linux-gnu- \
+  CLANG_TRIPLE=aarch64-linux-gnu- olddefconfig modules_prepare
+```
+
+Generate SELinux headers for the external module and set the literal target
+release in `out/include/config/kernel.release` and
+`out/include/generated/utsrelease.h`. Do not import another device's
+`Module.symvers`; the late loader requires an empty `__versions` section.
+
+```sh
+mkdir -p out/security/selinux
+out/scripts/selinux/genheaders/genheaders \
+  out/security/selinux/flask.h \
+  out/security/selinux/av_permissions.h
+
+make -C out M="$PWD/KernelSU/kernel" src="$PWD/KernelSU/kernel" \
+  ARCH=arm64 LLVM=1 LLVM_IAS=1 \
+  CROSS_COMPILE=aarch64-linux-gnu- \
+  CLANG_TRIPLE=aarch64-linux-gnu- \
+  CONFIG_KSU=m \
+  CONFIG_KSU_SAMSUNG_KDP=y \
+  CONFIG_KSU_SAMSUNG_RKP=y \
+  CONFIG_KSU_SAMSUNG_DEFEX=y \
+  KBUILD_MODPOST_WARN=1 modules
+```
+
+Validate and strip only debug sections:
+
+```sh
+KernelSU/kernel/check_symbol \
+  KernelSU/kernel/kernelsu.ko /path/to/A155NKSS6BYH1/vmlinux
+modinfo KernelSU/kernel/kernelsu.ko | grep vermagic
+readelf -SW KernelSU/kernel/kernelsu.ko | grep __versions
+llvm-strip -d KernelSU/kernel/kernelsu.ko
+```
+
+Expected metadata:
+
+```text
+vermagic: 5.10.226-android12-9-31117096 SMP preempt mod_unload modversions aarch64
+__versions size: 0
+```
+
+Copy the stripped KO to
+`userspace/ksud/bin/aarch64/android12-5.10_kernelsu.ko`, force `ksud` to
+recompile after the asset changes, and publish the KO and late-load binary as
+one versioned pair.
