@@ -282,9 +282,8 @@ depends on symbols trimmed from the target export table.
 Add an exact entry to `support/targets-v2.json`, including the target's literal
 `uname -r` value as `kernelRelease` and complete `/proc/version` string as
 `kernelVersion`. Do not invent a suffix when a vendor kernel exposes a short
-release string. Update artifact sizes and sign the final JSON with the existing
-Ed25519 manifest key. Verify the signature with the public key compiled into
-Root My Galaxy. Never add the private key to the repository.
+release string. Update artifact sizes, validate the final JSON, and confirm that
+Root My Galaxy can parse the profile before publishing it.
 
 ## 9. Cleanup policy
 

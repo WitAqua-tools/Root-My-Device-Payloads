@@ -7,7 +7,7 @@ This repository contains the device-specific native side of
 - the app-domain CVE-2026-43499 exploit source and compiled payload;
 - the app bootstrap helper source;
 - the verified KernelSU late-load build artifacts;
-- the Ed25519-signed support feed consumed by the application.
+- the support feed consumed by the application.
 
 It intentionally does not contain Android application source code.
 
@@ -32,14 +32,12 @@ display ID, SDK, ABI, and page size remain part of automatic profile selection.
 The port is based on the exploit source published at
 <https://github.com/NebuSec/CyberMeowfia/tree/main/IonStack/CVE-2026-43499/exploit>.
 
-## Feed integrity
+## Feed delivery
 
-`support/targets-v2.json` is signed with Ed25519. Root My Galaxy resolves the
-payload repository's current commit first and fetches the manifest, signature,
-and every artifact from that immutable commit. Per-artifact SHA-256 fields are
-not part of schema version 2.
-
-The signing private key is not stored in this repository.
+Root My Galaxy resolves the payload repository's current commit first and
+fetches `support/targets-v2.json` and every artifact from that immutable commit.
+Per-artifact SHA-256 fields and manifest signatures are not part of schema
+version 2.
 
 ## Build
 
