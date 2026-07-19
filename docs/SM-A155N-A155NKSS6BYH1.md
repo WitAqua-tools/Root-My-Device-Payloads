@@ -242,5 +242,5 @@ The standalone KO reports exactly:
 ```
 
 The `ksud` binary embeds that KO as `android12-5.10_kernelsu.ko`. This exact
-profile is included in the signed support feed, but hardware execution remains
+profile is included in the support feed, but hardware execution remains
 unverified until an `SM-A155N` running `A155NKSS6BYH1` is available.
