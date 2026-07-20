@@ -41,6 +41,12 @@
       "exploit": {
         "url": "https://raw.githubusercontent.com/BuSung-dev/Root-My-Galaxy-Payloads/main/artifacts/pa3q-S9380ZHUBCZF1/cve-2026-43499-app.so",
         "size": 104128
+      },      
+      "kernelsu": {
+        "url": "https://raw.githubusercontent.com/BuSung-dev/Root-My-Galaxy-Payloads/main/kernelsu/ksud-s25u-kdp",
+        "size": 6407096,
+        "kmi": "android15-6.6",
+        "managerPackage": "me.weishu.kernelsu"
       }
     }
   ]
