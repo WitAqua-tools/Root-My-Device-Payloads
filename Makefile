@@ -1,41 +1,70 @@
 API ?= 35
-TARGET ?= pmg110-16.0.9.400
-OUTDIR ?= build/$(TARGET)
 
-TARGET_HEADER := src/targets/$(TARGET)/target-core66.h
-TARGET_INCLUDE := ../targets/$(TARGET)/target-core66.h
+# A target is identified by the path it lives at, so TARGET doubles as the
+# device/region/kernel key used everywhere else: src/targets.json derives the
+# same path from its device, region and kernelRelease fields.
+TARGET ?= pmg110/cn/6.6.118-android15-8-g93e223c276e7-abogki500782043-4k
+PAYLOAD ?= CVE-2026-43499
+
+TARGET_DIR := src/targets/$(TARGET)
+TARGET_HEADER_NAME ?= target-core66.h
+TARGET_HEADER := $(TARGET_DIR)/$(TARGET_HEADER_NAME)
+TARGET_INCLUDE := targets/$(TARGET)/$(TARGET_HEADER_NAME)
+PAYLOAD_DIR := src/payloads/$(PAYLOAD)
+CORE_DIR := $(PAYLOAD_DIR)/core66
+HELPER_DIR := src/payloads/su_daemon
+
+# '/' is legal in TARGET but not in a directory name that has to stay flat.
+OUTDIR ?= build/$(subst /,_,$(TARGET))
+
 TARGET_CC := $(ANDROID_NDK_HOME)/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android$(API)-clang
 
 ifeq ($(wildcard $(TARGET_CC)),)
 $(error set ANDROID_NDK_HOME to an Android NDK containing $(TARGET_CC))
 endif
 
-PRELOAD := $(OUTDIR)/cve-2026-43499
-APP_PRELOAD := $(OUTDIR)/cve-2026-43499-app.so
-APP_RELEASE := $(OUTDIR)/cve-2026-43499-app.release.so
-APP_RELEASE_SIZE := 104128
-ROOT_HELPER := $(OUTDIR)/cve-2026-43499-root
+ifeq ($(wildcard $(TARGET_HEADER)),)
+$(error no $(TARGET_HEADER_NAME) at $(TARGET_DIR) -- TARGET is <device>/<region>/<kernel release>)
+endif
 
-# The exploit core is src/core66/, which is pmg110-root's -- the tree that roots
-# this device. src/root.c is this repository's own and stays: it is the
+# Artifact names follow the payload, so a second payload does not collide with
+# this one in build/ or in the flat release-asset namespace.
+PAYLOAD_SLUG := $(shell echo '$(PAYLOAD)' | tr 'A-Z' 'a-z')
+
+PRELOAD := $(OUTDIR)/$(PAYLOAD_SLUG)
+APP_PRELOAD := $(OUTDIR)/$(PAYLOAD_SLUG)-app.so
+APP_RELEASE := $(OUTDIR)/$(PAYLOAD_SLUG)-app.release.so
+APP_RELEASE_SIZE := 104128
+ROOT_HELPER := $(OUTDIR)/$(PAYLOAD_SLUG)-root
+
+# The exploit core is core66/, which is pmg110-root's -- the tree that roots
+# this device. root.c is this repository's own and stays: it is the
 # usermodehelper route that gets the app's helper exec'd as root, which is what
 # makes -c and --late-load available. install_android_root(int fd) is the seam.
 PRELOAD_SRCS := \
-  src/core66/main.c \
-  src/core66/util.c \
-  src/core66/slide.c \
-  src/core66/fops.c \
-  src/core66/pipe.c \
-  src/root.c \
-  src/preload.c
+  $(CORE_DIR)/main.c \
+  $(CORE_DIR)/util.c \
+  $(CORE_DIR)/slide.c \
+  $(CORE_DIR)/fops.c \
+  $(CORE_DIR)/pipe.c \
+  $(PAYLOAD_DIR)/root.c \
+  $(PAYLOAD_DIR)/preload.c
 
 APP_PRELOAD_SRCS := $(PRELOAD_SRCS)
-CORE66_DEPS := $(wildcard src/core66/*.h src/core66/kernelsnitch/*.h)
+PAYLOAD_DEPS := $(TARGET_HEADER) \
+  $(wildcard $(CORE_DIR)/*.h $(CORE_DIR)/kernelsnitch/*.h)
 
+# -Isrc resolves the "targets/<...>/<header>" form that core66/offset.h
+# includes -- it was "../targets/..." while the core sat directly under src/,
+# which no longer resolves now that it is a level deeper. -I$(CORE_DIR) covers
+# the core's own headers, and -I$(TARGET_DIR) any header
+# the target header names as a sibling. That last one is why a target header
+# does not have to spell out its own path: such an include expands inside a core
+# .c file and would otherwise be resolved against the core directory.
 COMMON_CFLAGS := \
   -O2 -g0 -Wall -Wextra \
   -Wno-unused-parameter -Wno-sign-compare \
-  -Isrc/core66 -Isrc -DTARGET_HEADER='"$(TARGET_INCLUDE)"'
+  -I$(CORE_DIR) -I$(TARGET_DIR) -Isrc -DTARGET_HEADER='"$(TARGET_INCLUDE)"'
 
 .DEFAULT_GOAL := all
 
@@ -48,23 +77,23 @@ release: $(APP_RELEASE)
 $(OUTDIR):
 	mkdir -p $@
 
-$(PRELOAD): $(PRELOAD_SRCS) $(TARGET_HEADER) $(CORE66_DEPS) | $(OUTDIR)
+$(PRELOAD): $(PRELOAD_SRCS) $(PAYLOAD_DEPS) | $(OUTDIR)
 	$(TARGET_CC) -fPIC $(COMMON_CFLAGS) $(PRELOAD_SRCS) \
 	  -shared -pthread -o $@
 
-$(ROOT_HELPER): src/su_daemon.c | $(OUTDIR)
+$(ROOT_HELPER): $(HELPER_DIR)/su_daemon.c | $(OUTDIR)
 	$(TARGET_CC) -fPIE -pie -O2 -g0 -Wall -Wextra $< -ldl -o $@
 
-$(APP_PRELOAD): $(APP_PRELOAD_SRCS) $(TARGET_HEADER) $(CORE66_DEPS) | $(OUTDIR)
+$(APP_PRELOAD): $(APP_PRELOAD_SRCS) $(PAYLOAD_DEPS) | $(OUTDIR)
 	$(TARGET_CC) -DAPP_PAYLOAD=1 -fPIC $(COMMON_CFLAGS) $(APP_PRELOAD_SRCS) \
 	  -shared -pthread -o $@
 
-$(APP_RELEASE): $(APP_PRELOAD_SRCS) $(TARGET_HEADER) $(CORE66_DEPS) | $(OUTDIR)
+$(APP_RELEASE): $(APP_PRELOAD_SRCS) $(PAYLOAD_DEPS) | $(OUTDIR)
 	$(TARGET_CC) -DAPP_PAYLOAD=1 -fPIC -Oz -g0 \
 	  -fno-unwind-tables -fno-asynchronous-unwind-tables \
 	  -ffunction-sections -fdata-sections \
 	  -Wall -Wextra -Wno-unused-parameter -Wno-sign-compare \
-	  -Isrc/core66 -Isrc -DTARGET_HEADER='"$(TARGET_INCLUDE)"' \
+	  -I$(CORE_DIR) -I$(TARGET_DIR) -Isrc -DTARGET_HEADER='"$(TARGET_INCLUDE)"' \
 	  $(APP_PRELOAD_SRCS) -shared -pthread \
 	  -Wl,--gc-sections -Wl,--icf=all -s -o $@
 	@test $$(stat -c %s $@) -le $(APP_RELEASE_SIZE)
@@ -72,6 +101,9 @@ $(APP_RELEASE): $(APP_PRELOAD_SRCS) $(TARGET_HEADER) $(CORE66_DEPS) | $(OUTDIR)
 
 info:
 	@echo "TARGET=$(TARGET)"
+	@echo "PAYLOAD=$(PAYLOAD)"
+	@echo "TARGET_DIR=$(TARGET_DIR)"
+	@echo "TARGET_HEADER=$(TARGET_HEADER)"
 	@echo "TARGET_CC=$(TARGET_CC)"
 	@echo "PRELOAD=$(PRELOAD)"
 	@echo "APP_PRELOAD=$(APP_PRELOAD)"
