@@ -1,0 +1,3 @@
+[submodule "src/kernelsu/KernelSU"]
+	path = src/kernelsu/KernelSU
+	url = https://github.com/tiann/KernelSU.git
