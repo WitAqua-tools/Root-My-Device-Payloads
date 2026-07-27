@@ -4,14 +4,14 @@ This document records the exact procedure used for the Galaxy S24 FE Korean
 firmware `S721NKSSCDZF3`. Do not reuse its values for another build. The
 separate Galaxy S24 `S921BXXSFDZF2` record, including every changed offset and
 firmware hash, is in
-[`SM-S921B-S921BXXSFDZF2.md`](SM-S921B-S921BXXSFDZF2.md).
+the removed Samsung profile docs.
 That model uses Exynos 2400 and is not a reference for the Snapdragon E3Q
 kernel. The independent SM-S928U/SM-S928U1 Qualcomm DZF2 procedure and
 completed offline-gate status are recorded in
-[`SM-S928U1-S928U1UES6DZF2.md`](SM-S928U1-S928U1UES6DZF2.md).
+the removed Samsung profile docs.
 The no-BTF Android 5.10 procedure and legacy `rt_mutex_waiter` layout are
 recorded separately in
-[`SM-A155N-A155NKSS6BYH1.md`](SM-A155N-A155NKSS6BYH1.md).
+the removed Samsung profile docs.
 
 ## 1. Identify the exact firmware
 
@@ -384,7 +384,7 @@ the default header.
 Build and enforce the fixed release payload size:
 
 ```sh
-make TARGET=essi-S721NKSSCDZF3 \
+make TARGET=pmg110-16.0.9.400 \
   ANDROID_NDK_HOME=/path/to/android-ndk-r29 release
 ```
 
@@ -417,7 +417,7 @@ For this target, the embedded and standalone KO reports:
 ```
 
 For a no-BTF Samsung 5.10 target with `CONFIG_TRIM_UNUSED_KSYMS=y`, follow the
-A155N procedure in [`SM-A155N-A155NKSS6BYH1.md`](SM-A155N-A155NKSS6BYH1.md).
+A155N procedure in the removed Samsung profile docs.
 Build with `KBUILD_MODPOST_WARN=1`, keep `.symtab` and `.strtab`, and require a
 zero-length `__versions` section so KernelSU's late loader can relocate every
 undefined symbol from `/proc/kallsyms`. Do not copy a `Module.symvers` from a
@@ -450,3 +450,18 @@ After the profile, documentation, and builds have been verified:
 
 Hardware execution remains a separate validation step. The S24 FE profile in
 this repository has not been executed on an `SM-S721N` device.
+
+## Note on the removed Samsung profiles
+
+The Samsung profiles this procedure was written against, and the payload core it
+describes, have been removed from this repository along with their artifacts and
+feed entries. Sections that name Samsung mechanisms — KDP/RKP/DEFEX, the 64KB
+placement-offset model where the KASLR slide and the physical offset are one
+number, `slide_app.c`'s P0 oracle — describe that removed core and are kept only
+as a record of how the offsets were derived.
+
+The profile that remains is built from `src/core66/`. Its slide comes from the
+boot-id sysctl rather than tracefs or the P0 oracle, and its physical offset is a
+target constant rather than something inferred from the slide. Read
+[`PMG110-16.0.9.400.md`](PMG110-16.0.9.400.md) for what that profile actually
+does; treat the Samsung-specific parts here as history.

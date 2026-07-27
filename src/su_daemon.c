@@ -26,7 +26,7 @@
 #define BOOTSTRAP_SOCK_PATH "/data/local/tmp/temp_su.sock"
 #define HOLD_READY_SOCKET "cve43499_roothold"
 #define SH_PATH "/system/bin/sh"
-#define S25U_KSUD_PATH "/data/local/tmp/ksud-s25u-kdp"
+#define KSUD_PATH "/data/local/tmp/ksud"
 #define LOGCAT_PATH "/system/bin/logcat"
 
 static uid_t allowed_client_uid = 2000;
@@ -464,7 +464,7 @@ static int run_s25u_late_load(struct su_request *request, int conn) {
               strerror(errno));
       _exit(10);
     }
-    if (mount(S25U_KSUD_PATH, LOGCAT_PATH, NULL, MS_BIND, NULL) != 0) {
+    if (mount(KSUD_PATH, LOGCAT_PATH, NULL, MS_BIND, NULL) != 0) {
       dprintf(STDERR_FILENO, "late-load: bind mount: %s\n", strerror(errno));
       _exit(11);
     }
