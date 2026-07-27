@@ -165,8 +165,10 @@
  * See docs/PMG110-16.0.9.400.md. */
 #define CONFIGFS_READ_ITER_OFF 0x0049f8ecULL
 #define CONFIGFS_BIN_WRITE_ITER_OFF 0x0049fe18ULL
-/* Until a run on hardware confirms the above, this profile can be told to use
- * the other address without a rebuild:
+/* Confirmed on hardware: with this value the payload reaches `cfi read ret=35`
+ * and roots the device first attempt, where 0x0049fc10 panicked. The switch
+ * below is kept because `pmg110-root` and `ghostlock-oneplus` root this device
+ * with 0x0049fc10 and nothing explains how — see docs/PMG110-16.0.9.400.md:
  *     adb shell CONFIGFS_READ_ITER_OFF=0x0049fc10 LD_PRELOAD=... /system/bin/true
  * Gated per target so the Samsung profiles still build byte-identically. */
 #define CONFIGFS_READ_ITER_ENV_OVERRIDE 1
