@@ -127,6 +127,15 @@
 #define P0_ORACLE_PROBE_OFFSET 0x1f0000ULL
 #define P0_FINGERPRINT_HEADER \
   "targets/pmg110-16.0.9.400/p0_fingerprint.h"
+/* Measured here: the pipe page main.c seeds before prepare_good_kernel_page()
+ * is back in the buddy allocator by the time install_pipe_physrw() scans it
+ * (page_type 0xffffff7f == PageBuddy, page->lru holding vmemmap pointers), so
+ * the scan matches nothing and PIPE_MAX_ATTEMPTS is 1 in the app build. Take a
+ * fresh page at the point of use, which is what the non-app build's route
+ * thread does and what its verified run relies on. Opt-in per target: the
+ * Samsung app profiles ship against the seeded page and are not re-measured
+ * here. */
+#define PHYSRW_REFRESH_PIPE_PAGE 1
 #endif
 #define KERNELSNITCH_IDENTITY_START 0xffffff8000000000ULL
 #define KERNELSNITCH_IDENTITY_END 0xffffff9000000000ULL

