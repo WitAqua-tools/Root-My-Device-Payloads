@@ -76,6 +76,13 @@
  * so raise it. 256GB is well inside the VA_BITS=39 kernel half and still
  * rejects a wildly wrong read. */
 #define SLIDE_MAX_KASLR_OFFSET 0x4000000000ULL
+/* Real arm64 KASLR here, not Samsung's 64KB placement step, so the slide is a
+ * multiple of MIN_KIMG_ALIGN == 2MB. Every slide measured on this device is:
+ * 1f1f000000, 280e200000, 260ca00000, 22bb800000, 2313600000. The tighter guard
+ * is worth having because a wrong slide panics rather than fails -- it rejects
+ * 0x132f0000, which is what `SLIDE_P0_OFFSET=0000002313600000` used to become
+ * when the value was parsed as octal. */
+#define SLIDE_KASLR_ALIGN 0x200000ULL
 
 /* The physical placement offset, which is what the physmap aliases in fops.c
  * are corrected by -- deliberately separate from the KASLR slide above.

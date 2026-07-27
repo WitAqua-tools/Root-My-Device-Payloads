@@ -179,6 +179,23 @@
 #define SLIDE_P0_FROM_KASLR(slide) ((uintptr_t)(slide))
 #endif
 
+/* Alignment a slide must satisfy to be believed. Samsung's placement offset
+ * moves in 64KB steps inside 2MB, so that is the default. Where the number is a
+ * real arm64 KASLR offset it is a multiple of MIN_KIMG_ALIGN == 2MB, and a
+ * target that says so gets a guard 32x tighter -- which matters because a wrong
+ * slide is not a failed run, it is a fake fops table full of unmapped text
+ * pointers and a panic on the next open of the device. */
+#ifndef SLIDE_KASLR_ALIGN
+#define SLIDE_KASLR_ALIGN 0x10000ULL
+#endif
+
+/* SLIDE_P0_OFFSET and friends are read as hex whether or not they carry an 0x.
+ * strtoull with base 0 would read the payload's own zero-padded output --
+ * "0000002313600000" -- as octal and silently return 0x132f0000, which is
+ * 64KB-aligned, passes every bound, and panics the device. Base 16 still
+ * accepts an explicit 0x prefix. */
+#define SLIDE_ENV_BASE 16
+
 /* Every physmap write target must land here, or the address is not what the
  * caller thinks it is. Checked before the write rather than diagnosed after. */
 #define P0_ALIAS_IN_RANGE(a) \
