@@ -122,7 +122,18 @@
 #define PIPE_DRAIN (PIPE_OBJS_PER_SLAB * PIPE_DRAIN_SLABS)
 #define PIPE_RECLAIM (PIPE_OBJS_PER_SLAB * PIPE_RECLAIM_SLABS)
 #if defined(APP_PAYLOAD) && APP_PAYLOAD
+#if defined(PHYSRW_REFRESH_PIPE_PAGE) && PHYSRW_REFRESH_PIPE_PAGE
+/* One attempt is right where the page is seeded once and reused, because a
+ * retry would re-scan the same page and reach the same answer. Where the page
+ * is taken at the point of use every retry gets a fresh reclaim, and the
+ * reclaim is probabilistic -- the non-app build gets 12 tries at it and its
+ * verified run is one sample of that. Eight rather than twelve because the app
+ * supervisor kills an attempt at EXPLOIT_ATTEMPT_TIMEOUT_SEC (90s) and each
+ * try costs an mm leak of a few seconds. */
+#define PIPE_MAX_ATTEMPTS 8
+#else
 #define PIPE_MAX_ATTEMPTS 1
+#endif
 #else
 #define PIPE_MAX_ATTEMPTS 12
 #endif
