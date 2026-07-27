@@ -161,6 +161,29 @@
 #ifndef ROUTE_WAIT_SECONDS
 #define ROUTE_WAIT_SECONDS 8
 #endif
+/* Physical placement offset, applied to the physmap aliases below.
+ *
+ * It is NOT the KASLR slide. A physmap alias does not move when the kernel
+ * text is randomised; it moves only when the image is loaded at a different
+ * physical address. Samsung kernels randomise placement in 64KB steps inside
+ * 2MB and move both by the same amount, which is why the payload historically
+ * used one number for both -- but on a device where the text base moves across
+ * the VA region while the physical load address is fixed, adding the slide to
+ * a physmap alias writes far outside the kernel. That is a panic, not a miss.
+ *
+ * A target whose physical offset is a known constant defines P0_PHYSICAL_OFFSET
+ * and the slide routines stop deriving it from the KASLR slide. */
+#ifdef P0_PHYSICAL_OFFSET
+#define SLIDE_P0_FROM_KASLR(slide) ((uintptr_t)(P0_PHYSICAL_OFFSET))
+#else
+#define SLIDE_P0_FROM_KASLR(slide) ((uintptr_t)(slide))
+#endif
+
+/* Every physmap write target must land here, or the address is not what the
+ * caller thinks it is. Checked before the write rather than diagnosed after. */
+#define P0_ALIAS_IN_RANGE(a) \
+  ((uintptr_t)(a) >= DIRECT_MAP_BASE && (uintptr_t)(a) < DIRECT_MAP_END)
+
 #define SLIDE_NFULNL_LOGGER_NAME \
   P0_DATA_ALIAS_CONST(SLIDE_NFULNL_LOGGER_NAME_IMAGE)
 #define SLIDE_NFULNL_LOGGER_OBJECT \

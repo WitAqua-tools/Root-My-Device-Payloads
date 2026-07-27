@@ -48,9 +48,10 @@
 /* Return address of the single `bl schedule` inside worker_thread(), which is
  * where an idle kworker parks and therefore what get_wchan() reports in the
  * sched_blocked_reason `caller` field. worker_thread is at 0x000d978c and the
- * call is at 0x000d9824, so the caller is the next instruction. A wrong value
- * here cannot produce a wrong slide: slide.c only accepts a candidate that is
- * 64KB aligned and <= 0x1f0000, so a mismatch fails the leak instead. */
+ * call is at 0x000d9824, so the caller is the next instruction. Confirmed on
+ * hardware: the trace reports caller=worker_thread+0x9c. A wrong value here
+ * cannot produce a wrong slide -- slide.c requires a 64KB-aligned candidate
+ * within SLIDE_MAX_KASLR_OFFSET, so a mismatch fails the leak instead. */
 #define SLIDE_TRACEFS_WORKER_CALLER_OFF 0x000d9828ULL
 #define SLIDE_P0_OFFSET_CANDIDATES \
   0x150000ULL, 0x100000ULL, 0x130000ULL, 0x090000ULL, \
@@ -75,6 +76,19 @@
  * so raise it. 256GB is well inside the VA_BITS=39 kernel half and still
  * rejects a wildly wrong read. */
 #define SLIDE_MAX_KASLR_OFFSET 0x4000000000ULL
+
+/* The physical placement offset, which is what the physmap aliases in fops.c
+ * are corrected by -- deliberately separate from the KASLR slide above.
+ *
+ * Zero here: the preloader's memory-layout table puts the kernel at
+ * mb_kernel.start == the DRAM base, so P0_KERNEL_PHYS_LOAD == P0_PHYS_OFFSET.
+ * Confirmed on hardware from the other direction too -- the pmg110-root
+ * payload roots this device addressing kernel data through the physmap alias
+ * alone, with no slide applied.
+ *
+ * Without this the payload adds 0x1f1f000000 to a physmap alias and writes
+ * 124 GiB past its target. Two kernel panics on this device came from that. */
+#define P0_PHYSICAL_OFFSET 0x0ULL
 /* Measured on this kernel under QEMU (break on both syscall entries from one
  * task): core_sys_select frame 0x1f0 with stack_fds at sp+0x80,
  * futex_wait_requeue_pi frame 0x1c0 with rt_waiter at sp+0x90, entry-SP delta

