@@ -12,8 +12,8 @@ permissions:
 env:
   # Pin the NDK: the payload is a fixed-size blob and the app checks that size,
   # so the toolchain is part of the artifact's identity, not an implementation
-  # detail of the runner.
-  NDK_VERSION: r29
+  # detail of the runner. This is the sdkmanager package revision for r29.
+  NDK_VERSION: 29.0.14206865
 
 jobs:
   discover:
@@ -40,15 +40,31 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: nttld/setup-ndk@v1
-        id: ndk
-        with:
-          ndk-version: ${{ env.NDK_VERSION }}
-          local-cache: true
+      # Installed through the runner's own SDK rather than a third-party action.
+      # setup-ndk with local-cache restored a tree whose bin/clang symlink was
+      # missing, and the NDK's aarch64-linux-android35-clang is a shell wrapper
+      # that execs "$bin_dir/clang" -- so the build died with
+      # "clang: No such file or directory" from inside the compiler driver.
+      - name: Install NDK ${{ env.NDK_VERSION }}
+        run: |
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "ndk;$NDK_VERSION" > /dev/null
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+
+      # Fail here, with the reason, rather than inside a compile of the payload.
+      - name: Check the toolchain is complete
+        run: |
+          bin="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          for f in clang aarch64-linux-android35-clang; do
+            if [ ! -e "$bin/$f" ]; then
+              echo "::error::$bin/$f is missing or a dangling symlink"
+              ls -la "$bin/$f" || true
+              exit 1
+            fi
+          done
+          "$bin/aarch64-linux-android35-clang" --version
 
       - name: Build ${{ matrix.profile }}
-        env:
-          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
         run: |
           make TARGET=${{ matrix.profile }}
           make TARGET=${{ matrix.profile }} release
