@@ -10,33 +10,61 @@ permissions:
   contents: read
 
 env:
-  # Pin the NDK: the payload is a fixed-size blob and the app checks that size,
-  # so the toolchain is part of the artifact's identity, not an implementation
-  # detail of the runner. This is the sdkmanager package revision for r29.
+  # Pin the NDK: the exploit payload is a fixed-size blob and the app checks
+  # that size, so the toolchain is part of the artifact's identity, not an
+  # implementation detail of the runner. This is the sdkmanager package
+  # revision for r29.
   NDK_VERSION: 29.0.14206865
 
 jobs:
   discover:
     runs-on: ubuntu-latest
     outputs:
-      profiles: ${{ steps.list.outputs.profiles }}
+      targets: ${{ steps.list.outputs.targets }}
+      kernelsu_feed: ${{ steps.list.outputs.kernelsu_feed }}
+      kernelsu_extra: ${{ steps.list.outputs.kernelsu_extra }}
+      tag: ${{ steps.list.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
-      - id: list
-        # Every directory under src/targets is a profile; nothing to keep in
-        # sync by hand when one is added.
-        run: |
-          profiles=$(ls src/targets | jq -R -s -c 'split("\n") | map(select(length > 0))')
-          echo "profiles=$profiles" >> "$GITHUB_OUTPUT"
-          echo "$profiles"
 
-  build:
+      # Fail here, in seconds, rather than after a matrix of kernel builds.
+      # Everything checked at this point is hand-authored, so a mistake in it
+      # cannot be caught by any later step that only inspects binaries.
+      - name: Validate src/targets.json
+        run: python3 tools/generate_feed.py --emit validate
+
+      - id: list
+        # The build matrices come out of the same script that generates the
+        # feed, so nothing here has to re-derive how a target maps onto a path.
+        # Adding a target or a payload needs no workflow change.
+        #
+        # The KernelSU builds are split by whether anything that can reach the
+        # feed depends on them. Only that half can hold up a release: a build
+        # no publishable target needs is published when it succeeds and
+        # reported when it does not, but it must never be the reason the app is
+        # left with no payloads to fetch.
+        run: |
+          targets=$(python3 tools/generate_feed.py --emit targets)
+          kernelsu=$(python3 tools/generate_feed.py --emit kernelsu)
+          {
+            echo "targets=$targets"
+            echo "kernelsu_feed=$(jq -c '[.[] | select(.feed)]' <<<"$kernelsu")"
+            echo "kernelsu_extra=$(jq -c '[.[] | select(.feed | not)]' <<<"$kernelsu")"
+            # A tag that is unique per run. The app resolves releases/latest and
+            # then downloads every artifact from that tag, so the set it sees
+            # has to be immutable once published -- a rolling tag whose assets
+            # get replaced would break that.
+            echo "tag=payloads-${{ github.run_number }}-$(echo '${{ github.sha }}' | cut -c-7)"
+          } >> "$GITHUB_OUTPUT"
+          cat "$GITHUB_OUTPUT"
+
+  exploit:
     needs: discover
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        profile: ${{ fromJson(needs.discover.outputs.profiles) }}
+        target: ${{ fromJson(needs.discover.outputs.targets) }}
     steps:
       - uses: actions/checkout@v4
 
@@ -64,10 +92,15 @@ jobs:
           done
           "$bin/aarch64-linux-android35-clang" --version
 
-      - name: Build ${{ matrix.profile }}
+      - name: Build ${{ matrix.target.profileId }}
+        env:
+          TARGET: ${{ matrix.target.target }}
+          PAYLOAD: ${{ matrix.target.payload }}
         run: |
-          make TARGET=${{ matrix.profile }}
-          make TARGET=${{ matrix.profile }} release
+          make TARGET="$TARGET" PAYLOAD="$PAYLOAD"
+          make TARGET="$TARGET" PAYLOAD="$PAYLOAD" release
+          echo "OUTDIR=build/${TARGET//\//_}" >> "$GITHUB_ENV"
+          echo "SLUG=$(echo "$PAYLOAD" | tr 'A-Z' 'a-z')" >> "$GITHUB_ENV"
 
       # The Makefile already fails the build if the release payload exceeds the
       # fixed size, then pads to it. Re-assert the final size here so a change
@@ -76,111 +109,187 @@ jobs:
       - name: Check release payload size
         run: |
           expected=$(grep -oP '^APP_RELEASE_SIZE\s*:=\s*\K[0-9]+' Makefile)
-          actual=$(stat -c %s build/${{ matrix.profile }}/cve-2026-43499-app.release.so)
+          actual=$(stat -c %s "$OUTDIR/$SLUG-app.release.so")
           echo "expected=$expected actual=$actual"
           test "$actual" = "$expected"
 
-      # Reported, not enforced. The committed artifacts were produced with an
-      # NDK that does not byte-match r29, so making this a gate would fail every
-      # existing profile. It still answers the question worth asking on each
-      # push: does the checked-in blob correspond to the checked-in source?
-      - name: Compare against the committed artifact
-        continue-on-error: true
+      # Flat names, because release assets share one namespace.
+      - name: Collect
         run: |
-          committed=artifacts/${{ matrix.profile }}/cve-2026-43499-app.so
-          built=build/${{ matrix.profile }}/cve-2026-43499-app.release.so
-          if [ ! -f "$committed" ]; then
-            echo "::notice::no committed artifact for ${{ matrix.profile }}"
-            exit 0
-          fi
-          if cmp -s "$built" "$committed"; then
-            echo "::notice::${{ matrix.profile }} artifact reproduces byte-for-byte"
-          else
-            echo "::warning::${{ matrix.profile }} artifact differs from a fresh $NDK_VERSION build"
-            echo "  committed $(sha256sum "$committed" | cut -d' ' -f1)"
-            echo "  built     $(sha256sum "$built"     | cut -d' ' -f1)"
-          fi
+          mkdir -p out
+          cp "$OUTDIR/$SLUG-app.release.so" "out/${{ matrix.target.asset }}"
+          cp "$OUTDIR/$SLUG-root" "out/$SLUG-root"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.profile }}
-          path: |
-            build/${{ matrix.profile }}/cve-2026-43499
-            build/${{ matrix.profile }}/cve-2026-43499-app.so
-            build/${{ matrix.profile }}/cve-2026-43499-app.release.so
-            build/${{ matrix.profile }}/cve-2026-43499-root
+          name: exploit-${{ matrix.target.profileId }}
+          path: out/
+          if-no-files-found: error
+
+  kernelsu:
+    # The builds something publishable depends on. A failure here means the
+    # feed cannot be built, so it does stop a release.
+    needs: discover
+    if: needs.discover.outputs.kernelsu_feed != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        build: ${{ fromJson(needs.discover.outputs.kernelsu_feed) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: ./.github/actions/build-kernelsu
+        with:
+          id: ${{ matrix.build.id }}
+          kmi: ${{ matrix.build.kmi }}
+          ddk-image: ${{ matrix.build.ddkImage }}
+          kernel-release: ${{ matrix.build.kernelRelease }}
+          config: ${{ join(matrix.build.config, ' ') }}
+          ndk-version: ${{ env.NDK_VERSION }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kernelsu-${{ matrix.build.id }}
+          path: out/
+          if-no-files-found: error
+
+  kernelsu-extra:
+    # Builds no publishable target depends on. Nothing downstream waits on the
+    # result, so a target whose kernel source is not reproducible from a
+    # generic DDK cannot leave the app with no payloads to fetch.
+    needs: discover
+    if: needs.discover.outputs.kernelsu_extra != '[]'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        build: ${{ fromJson(needs.discover.outputs.kernelsu_extra) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: ./.github/actions/build-kernelsu
+        with:
+          id: ${{ matrix.build.id }}
+          kmi: ${{ matrix.build.kmi }}
+          ddk-image: ${{ matrix.build.ddkImage }}
+          kernel-release: ${{ matrix.build.kernelRelease }}
+          config: ${{ join(matrix.build.config, ' ') }}
+          ndk-version: ${{ env.NDK_VERSION }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kernelsu-${{ matrix.build.id }}
+          path: out/
           if-no-files-found: error
 
   feed:
-    # The app resolves the repository's current commit and then fetches
-    # support/targets-v2.json plus every artifact from it, so a malformed feed
-    # or a profile whose artifact is missing breaks installs at run time.
+    # The app resolves releases/latest and then fetches targets-v2.json plus
+    # every artifact named in it, so a malformed feed or a target whose
+    # artifact is missing breaks installs at run time. Build it from what the
+    # matrices actually produced rather than from anything committed.
+    #
+    # always(): the kernelsu matrix is skipped outright when no target is ready
+    # for the feed, and a feed with no entries is still a valid thing to
+    # publish while a port is in progress.
+    needs: [discover, exploit, kernelsu]
+    if: |
+      always()
+      && needs.exploit.result == 'success'
+      && needs.kernelsu.result != 'failure'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Validate support/targets-v2.json
-        run: |
-          python3 - <<'PY'
-          import json, os, sys
-          d = json.load(open('support/targets-v2.json'))
-          assert d['schemaVersion'] == 2, d['schemaVersion']
-          required = ['profileId','manufacturer','model','device','kernelRelease',
-                      'kernelVersion','kernelBuildVersion','buildDisplay',
-                      'buildFingerprint','sdk','abi','pageSize','exploit','kernelsu']
-          bad = 0
-          seen = set()
-          for t in d['targets']:
-              missing = [k for k in required if k not in t]
-              if missing:
-                  print(f"{t.get('profileId','?')}: missing {missing}"); bad += 1
-              pid = t.get('profileId')
-              if pid in seen:
-                  print(f"{pid}: duplicate profileId"); bad += 1
-              seen.add(pid)
-              # kernelRelease must be the prefix of the full /proc/version line,
-              # otherwise the two matching predicates disagree with each other
-              if t['kernelRelease'] not in t['kernelVersion']:
-                  print(f"{pid}: kernelRelease not present in kernelVersion"); bad += 1
-              if t['kernelBuildVersion'] not in t['kernelVersion']:
-                  print(f"{pid}: kernelBuildVersion not present in kernelVersion"); bad += 1
-              art = f"artifacts/{pid}/cve-2026-43499-app.so"
-              if not os.path.exists(art):
-                  print(f"{pid}: {art} missing"); bad += 1
-              elif os.path.getsize(art) != t['exploit']['size']:
-                  print(f"{pid}: exploit.size {t['exploit']['size']} != {os.path.getsize(art)}"); bad += 1
-          print(f"{len(d['targets'])} profiles checked, {bad} problem(s)")
-          sys.exit(1 if bad else 0)
-          PY
 
-      # The app rewrites every feed URL from the mutable /main/ form onto the
-      # commit it resolved, and require()s that each one starts with its own
-      # RAW_REPOSITORY prefix. So a fork that repoints PayloadRepository.kt but
-      # not this file -- or the reverse -- fails every install at run time with
-      # nothing to show for it. Anchor the URLs to the repository they live in.
-      - name: Check feed URLs point at this repository
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: exploit-*
+          path: artifacts/exploit
+          merge-multiple: true
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: kernelsu-*
+          path: artifacts/kernelsu
+          merge-multiple: true
+
+      - name: Generate the support feed
         run: |
-          expected="https://raw.githubusercontent.com/$GITHUB_REPOSITORY/main/"
+          mkdir -p artifacts/kernelsu
+          python3 tools/generate_feed.py --emit feed \
+            --exploit-dir artifacts/exploit \
+            --ksud-dir artifacts/kernelsu \
+            --repository "$GITHUB_REPOSITORY" \
+            --tag '${{ needs.discover.outputs.tag }}' \
+            --output support/targets-v2.json
+          cat support/targets-v2.json
+
+      # The generator writes these URLs, so this is a check that it and the app
+      # still agree on where a release asset lives. PayloadRepository.kt
+      # require()s the same prefix and fails every install if they diverge.
+      - name: Check the feed URLs point at this release
+        run: |
+          expected="https://github.com/$GITHUB_REPOSITORY/releases/download/${{ needs.discover.outputs.tag }}/"
           echo "expected prefix: $expected"
           python3 - "$expected" <<'PY'
           import json, sys
           expected = sys.argv[1]
           bad = 0
-          for t in json.load(open('support/targets-v2.json'))['targets']:
+          for target in json.load(open('support/targets-v2.json'))['targets']:
               for field in ('exploit', 'kernelsu'):
-                  url = t[field]['url']
+                  url = target[field]['url']
                   if not url.startswith(expected):
-                      print(f"{t['profileId']}.{field}: {url}")
+                      print(f"{target['profileId']}.{field}: {url}")
                       bad += 1
-          print(f"{bad} URL(s) not anchored to this repository")
+          print(f"{bad} URL(s) not anchored to this release")
           sys.exit(1 if bad else 0)
           PY
 
-      - name: Report profiles with no feed entry
+      - uses: actions/upload-artifact@v4
+        with:
+          name: feed
+          path: support/targets-v2.json
+          if-no-files-found: error
+
+  publish:
+    # kernelsu-extra is waited on so its artifacts make it into the release,
+    # but always() means a failure there does not withhold one. The feed is the
+    # only hard requirement.
+    needs: [discover, feed, kernelsu-extra]
+    if: |
+      always()
+      && needs.feed.result == 'success'
+      && github.event_name == 'push'
+      && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+
+      - name: List assets
         run: |
-          feed=$(python3 -c "import json;print(' '.join(t['profileId'] for t in json.load(open('support/targets-v2.json'))['targets']))")
-          for p in $(ls src/targets); do
-            case " $feed " in
-              *" $p "*) ;;
-              *) echo "::notice::profile $p builds but has no support/targets-v2.json entry" ;;
-            esac
-          done
+          ls -la assets
+          if [ '${{ needs.kernelsu-extra.result }}' = 'failure' ]; then
+            echo "::warning::kernelsu-extra failed; the release carries only the builds that completed"
+          fi
+
+      - name: Publish ${{ needs.discover.outputs.tag }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.discover.outputs.tag }}
+          # The app reads releases/latest, which skips drafts and prereleases.
+          draft: false
+          prerelease: false
+          make_latest: true
+          body: |
+            Payloads built from ${{ github.sha }}.
+
+            `targets-v2.json` is the support feed the application reads; every
+            other asset is referenced from it by this tag.
+          files: assets/*
+          fail_on_unmatched_files: true

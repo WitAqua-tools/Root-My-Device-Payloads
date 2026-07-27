@@ -1,0 +1,25 @@
+{
+  "$comment": [
+    "The KernelSU late-load build this target pairs with. CI rebuilds it from",
+    "the src/kernelsu submodule; nothing is committed as a binary.",
+    "",
+    "'id' names the published assets (ksud-<id>, kernelsu-<id>.ko). Targets that",
+    "load the same module share one id and are built once.",
+    "",
+    "'kernelRelease' is the exact UTS release the module must report in its",
+    "vermagic. The DDK image ships its own release string, so the build",
+    "overwrites the generated utsrelease.h and kernel.release with this value",
+    "before compiling.",
+    "",
+    "'config' is passed to the module build as-is. PMG110 has no KDP/RKP/DEFEX,",
+    "so it builds stock. The source patch is still applied -- its ksud half is",
+    "the staged late-load the bootstrap helper drives -- and only these",
+    "kernel-side options vary between targets."
+  ],
+  "id": "pmg110",
+  "kmi": "android15-6.6",
+  "ddkImage": "ghcr.io/ylarod/ddk-min:android15-6.6-20260313",
+  "kernelRelease": "6.6.118-android15-8-g93e223c276e7-abogki500782043-4k",
+  "config": [],
+  "managerPackage": "me.weishu.kernelsu"
+}

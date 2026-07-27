@@ -1,0 +1,41 @@
+{
+  "$comment": [
+    "Every supported target, keyed by device, region and kernel release. The",
+    "files for an entry live at",
+    "src/targets/<device>/<region lowercased>/<kernelRelease>/ -- the path is",
+    "derived, never written here, so the two cannot drift apart.",
+    "",
+    "This is the hand-authored half of the support feed. Artifact URLs and",
+    "sizes are not here: they are only knowable after CI builds them, and",
+    "tools/generate_feed.py joins the two into the targets-v2.json the app",
+    "reads. See the repository README.",
+    "",
+    "kernelVersion is the complete /proc/version line and kernelBuildVersion is",
+    "the '#<n> SMP ...' part of it. Both must be captured from a running device",
+    "(`adb shell cat /proc/version`) -- they cannot be derived from a firmware",
+    "image. A target whose kernelVersion is null is carried here but left out",
+    "of the feed, because the app matches on those exact strings."
+  ],
+  "schemaVersion": 1,
+  "targets": [
+    {
+      "profileId": "pmg110-cn-16.0.9.400",
+      "payload": "CVE-2026-43499",
+      "device": "pmg110",
+      "region": "CN",
+      "manufacturer": "OPPO",
+      "model": "PMG110",
+      "marketingName": "OPPO K15 Pro+",
+      "soc": "MediaTek MT6991",
+      "kernelRelease": "6.6.118-android15-8-g93e223c276e7-abogki500782043-4k",
+      "kernelVersion": null,
+      "kernelBuildVersion": null,
+      "buildDisplay": "PMG110_16.0.9.400(CN01)",
+      "buildFingerprint": "OPPO/PMG110/OP61E5L1:16/BP2A.250605.015/B.c24acd_188efc3_187038b:user/release-keys",
+      "sdk": 36,
+      "abi": "arm64-v8a",
+      "pageSize": 4096,
+      "status": "the LD_PRELOAD build roots this device; the app payload the feed serves still cross-checks the slide against slide_p0_offset, which is two numbers here and one on Samsung"
+    }
+  ]
+}

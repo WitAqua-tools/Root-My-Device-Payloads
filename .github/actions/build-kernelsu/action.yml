@@ -1,0 +1,148 @@
+name: Build a KernelSU late-load artifact
+description: >
+  Build one target's kernelsu.json entry from the pinned submodule: the kernel
+  module in its KMI's DDK image, then the ksud that embeds it. Leaves both in
+  out/ as ksud-<id> and kernelsu-<id>.ko.
+
+inputs:
+  id:
+    description: builds.json entry id
+    required: true
+  kmi:
+    description: KMI the module is built for
+    required: true
+  ddk-image:
+    description: DDK container image for that KMI
+    required: true
+  kernel-release:
+    description: exact UTS release the module must claim
+    required: true
+  config:
+    description: space-separated kernel config options for this build, may be empty
+    required: false
+    default: ""
+  target-dir:
+    description: target directory that may carry extra patches for this build
+    required: false
+    default: ""
+  ndk-version:
+    description: sdkmanager package revision of the NDK to build ksud with
+    required: true
+
+runs:
+  using: composite
+  steps:
+    # The patches are the source of truth for the delta; the submodule stays an
+    # unmodified upstream checkout pinned to the tag they were written against,
+    # so a failure to apply is a real signal rather than noise. src/kernelsu
+    # holds what every build needs -- the staged late-load the bootstrap helper
+    # drives -- and a target may add its own on top.
+    - name: Apply the KernelSU patches
+      shell: bash
+      run: |
+        shopt -s nullglob
+        patches=(src/kernelsu/patches/*.patch)
+        if [ -n '${{ inputs.target-dir }}' ]; then
+          patches+=('${{ inputs.target-dir }}'/kernelsu/*.patch)
+        fi
+        if [ ${#patches[@]} -eq 0 ]; then
+          echo "::error::no patches found; the staged late-load is required"
+          exit 1
+        fi
+        for patch in "${patches[@]}"; do
+          echo "applying $patch"
+          git -C src/kernelsu/KernelSU apply --check "$GITHUB_WORKSPACE/$patch"
+          git -C src/kernelsu/KernelSU apply "$GITHUB_WORKSPACE/$patch"
+        done
+
+    - name: Install NDK ${{ inputs.ndk-version }}
+      shell: bash
+      run: |
+        "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+          "ndk;${{ inputs.ndk-version }}" > /dev/null
+
+    - name: Build the ${{ inputs.id }} kernel module
+      shell: bash
+      run: |
+        docker run --rm \
+          -v "$PWD:/workspace" \
+          -w /workspace/src/kernelsu/KernelSU/kernel \
+          -e KERNEL_RELEASE='${{ inputs.kernel-release }}' \
+          -e TARGET_CONFIG='${{ inputs.config }}' \
+          '${{ inputs.ddk-image }}' \
+          bash -eu -c '
+            # Without this the module records no KSU_GIT_VERSION, because the
+            # bind-mounted tree is owned by a different uid than the container.
+            git config --global --add safe.directory /workspace/src/kernelsu/KernelSU
+
+            # The DDK ships its own release string and the targets set
+            # CONFIG_MODULE_FORCE_LOAD=n, so the module has to be built
+            # claiming the exact release of the kernel it will be loaded into.
+            # For a build whose kernelRelease is already the image default this
+            # is a no-op, which is how the S25U module was originally produced.
+            old=$(cat "$KDIR/include/config/kernel.release")
+            echo "kernel release: $old -> $KERNEL_RELEASE"
+            sed -i "s|$old|$KERNEL_RELEASE|g" "$KDIR/include/generated/utsrelease.h"
+            printf "%s\n" "$KERNEL_RELEASE" > "$KDIR/include/config/kernel.release"
+
+            # ksud late-load resolves undefined symbols from /proc/kallsyms
+            # before init_module, which requires a zero-length __versions
+            # section. Leaving the DDK Module.symvers in place would make
+            # modpost emit CRCs for a kernel that is not the target.
+            : > "$KDIR/Module.symvers"
+
+            make clean >/dev/null 2>&1 || true
+            # env, not a bare prefix: the shell only recognises assignments
+            # written literally before expansion, so $TARGET_CONFIG would be
+            # run as a command instead of setting the options.
+            env CONFIG_KSU=m $TARGET_CONFIG KBUILD_MODPOST_WARN=1 CC=clang make -j"$(nproc)"
+          '
+        sudo chown -R "$(id -u):$(id -g)" src/kernelsu/KernelSU
+
+    # Both of these are load-time contracts with the target kernel, and both
+    # fail on the device rather than in the build if they are wrong.
+    - name: Check the module's load-time identity
+      shell: bash
+      run: |
+        ko=src/kernelsu/KernelSU/kernel/kernelsu.ko
+        actual=$(strings -a "$ko" | grep -m1 '^vermagic=')
+        expected='vermagic=${{ inputs.kernel-release }} SMP preempt mod_unload modversions aarch64'
+        echo "actual:   $actual"
+        echo "expected: $expected"
+        test "$actual" = "$expected"
+        versions=$(readelf -SW "$ko" | sed 's/^ *\[[ 0-9]*\] *//' | awk '$1 == "__versions" { print $5 }')
+        echo "__versions size: 0x${versions:-missing}"
+        test -n "$versions"
+        test "$((16#$versions))" -eq 0
+
+    - name: Build ksud for ${{ inputs.id }}
+      shell: bash
+      run: |
+        ndk="$ANDROID_HOME/ndk/${{ inputs.ndk-version }}/toolchains/llvm/prebuilt/linux-x86_64"
+        "$ndk/bin/llvm-strip" -d src/kernelsu/KernelSU/kernel/kernelsu.ko
+        # ksud embeds every bin/aarch64/<kmi>_kernelsu.ko at compile time and
+        # picks one by KMI at run time, so the module has to be in place before
+        # the Rust build, and the pair must be published together.
+        cp src/kernelsu/KernelSU/kernel/kernelsu.ko \
+          "src/kernelsu/KernelSU/userspace/ksud/bin/aarch64/${{ inputs.kmi }}_kernelsu.ko"
+        rustup target add aarch64-linux-android
+        export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$ndk/bin/aarch64-linux-android35-clang"
+        export CC_aarch64_linux_android="$ndk/bin/aarch64-linux-android35-clang"
+        export AR_aarch64_linux_android="$ndk/bin/llvm-ar"
+        export LIBCLANG_PATH="$ndk/lib"
+        # ksud's build script runs bindgen over src/ksu_uapi.h. Without an
+        # explicit target and sysroot, libclang resolves the runner's own
+        # /usr/include and dies on a missing asm/ioctl.h.
+        export BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android="--target=aarch64-linux-android35 --sysroot=$ndk/sysroot"
+        cargo build --release --target aarch64-linux-android -p ksud \
+          --manifest-path src/kernelsu/KernelSU/Cargo.toml
+
+    - name: Collect
+      shell: bash
+      run: |
+        mkdir -p out
+        cp src/kernelsu/KernelSU/target/aarch64-linux-android/release/ksud \
+          out/ksud-${{ inputs.id }}
+        # Published for auditing; the copy that actually loads is the one
+        # embedded in ksud above.
+        cp src/kernelsu/KernelSU/kernel/kernelsu.ko out/kernelsu-${{ inputs.id }}.ko
