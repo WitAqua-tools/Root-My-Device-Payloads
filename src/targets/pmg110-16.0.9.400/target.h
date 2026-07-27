@@ -80,11 +80,12 @@
 /* The physical placement offset, which is what the physmap aliases in fops.c
  * are corrected by -- deliberately separate from the KASLR slide above.
  *
- * Zero here: the preloader's memory-layout table puts the kernel at
- * mb_kernel.start == the DRAM base, so P0_KERNEL_PHYS_LOAD == P0_PHYS_OFFSET.
- * Confirmed on hardware from the other direction too -- the pmg110-root
- * payload roots this device addressing kernel data through the physmap alias
- * alone, with no slide applied.
+ * Zero here, measured on the device with root rather than inferred:
+ *   /proc/iomem  Kernel code starts at 0x80010000 = physical _stext
+ *   kallsyms     _stext - _text = 0x10000, so physical _text = 0x80000000
+ *   => P0_KERNEL_PHYS_LOAD == P0_PHYS_OFFSET == 0x80000000, delta 0
+ * and init_task's linear-map address comes out at 0xffffff800213e780, which is
+ * P0_DATA_ALIAS_CONST() with nothing added.
  *
  * Without this the payload adds 0x1f1f000000 to a physmap alias and writes
  * 124 GiB past its target. Two kernel panics on this device came from that. */
