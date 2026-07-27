@@ -3,8 +3,15 @@
 | Path | Contents |
 | --- | --- |
 | `KernelSU/` | upstream submodule, pinned to `v3.2.5` (`b0bc817b4e966aa6aa830834eaf6ef765d821d40`) |
-| `patches/` | applied to every build, before any the target adds |
+| `Root-My-Device-KSU/` | submodule holding the patches, applied to every build before any the target adds |
 | `tools/` | module auditing against a recovered target kernel |
+
+The patches are a derivative work of KernelSU and carry its GPL terms, not this
+repository's Apache-2.0 ones, so they live in
+[Root-My-Device-KSU](https://github.com/Witaqua-tools/Root-My-Device-KSU) with
+verbatim copies of both upstream licence files. Hunks under `kernel/` are
+GPL-2.0 and those under `userspace/` are GPL-3.0. Clone with
+`--recurse-submodules` or nothing will build.
 
 Nothing here is committed as a binary. Each target declares the build it pairs
 with in its own `kernelsu.json`, and CI produces `ksud-<id>` and
@@ -13,7 +20,7 @@ published together, because `ksud` embeds the module it loads.
 
 ## Why the patch is applied to every build
 
-[`patches/KernelSU-v3.2.5-samsung-kdp-rkp-defex.patch`](patches/KernelSU-v3.2.5-samsung-kdp-rkp-defex.patch)
+[`Root-My-Device-KSU/patches/KernelSU-v3.2.5-samsung-kdp-rkp-defex.patch`](https://github.com/Witaqua-tools/Root-My-Device-KSU/blob/main/patches/KernelSU-v3.2.5-samsung-kdp-rkp-defex.patch)
 carries two independent halves.
 
 The **`ksud` half is required by every target**, Samsung or not. Upstream
@@ -45,9 +52,9 @@ CI runs this from each target's `kernelsu.json`; the steps are here for
 reproducing one by hand.
 
 ```sh
-git submodule update --init src/kernelsu/KernelSU
+git submodule update --init --recursive src/kernelsu
 git -C src/kernelsu/KernelSU apply \
-  src/kernelsu/patches/KernelSU-v3.2.5-samsung-kdp-rkp-defex.patch
+  "$PWD/src/kernelsu/Root-My-Device-KSU/patches"/*.patch
 ```
 
 Build the module inside the KMI's DDK image, overwriting the image's own

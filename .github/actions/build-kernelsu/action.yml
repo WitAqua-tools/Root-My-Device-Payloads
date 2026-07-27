@@ -32,16 +32,20 @@ inputs:
 runs:
   using: composite
   steps:
-    # The patches are the source of truth for the delta; the submodule stays an
-    # unmodified upstream checkout pinned to the tag they were written against,
-    # so a failure to apply is a real signal rather than noise. src/kernelsu
-    # holds what every build needs -- the staged late-load the bootstrap helper
-    # drives -- and a target may add its own on top.
+    # The patches are the source of truth for the delta; the KernelSU submodule
+    # stays an unmodified upstream checkout pinned to the tag they were written
+    # against, so a failure to apply is a real signal rather than noise.
+    #
+    # They live in their own repository because they are a derivative work of
+    # KernelSU and carry its GPL terms rather than this repository's Apache-2.0
+    # ones. Root-My-Device-KSU holds what every build needs -- the staged
+    # late-load the bootstrap helper drives -- and a target may add its own on
+    # top.
     - name: Apply the KernelSU patches
       shell: bash
       run: |
         shopt -s nullglob
-        patches=(src/kernelsu/patches/*.patch)
+        patches=(src/kernelsu/Root-My-Device-KSU/patches/*.patch)
         if [ -n '${{ inputs.target-dir }}' ]; then
           patches+=('${{ inputs.target-dir }}'/kernelsu/*.patch)
         fi

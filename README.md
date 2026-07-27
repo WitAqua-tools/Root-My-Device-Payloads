@@ -54,7 +54,7 @@ src/payloads/<payload>/               one directory per exploit
                         root.c        this repository's usermodehelper route
                         preload.c
 src/payloads/su_daemon/               the bootstrap helper the app ships in its APK
-src/kernelsu/                         KernelSU submodule, shared patches and audit tools
+src/kernelsu/                         KernelSU submodule, patch submodule and audit tools
 ```
 
 A target's directory is derived from its `device`, `region` and `kernelRelease`
@@ -119,9 +119,12 @@ with it:
 git clone --recurse-submodules <this repository>
 ```
 
-The late-load artifacts are rebuilt from that submodule plus
-[`src/kernelsu/patches`](src/kernelsu/patches); the procedure and the per-target
-audit steps are in [`src/kernelsu/README.md`](src/kernelsu/README.md).
+The late-load artifacts are rebuilt from that submodule plus the patches in
+[Root-My-Device-KSU](https://github.com/Witaqua-tools/Root-My-Device-KSU),
+itself a submodule. Those patches are a derivative work of KernelSU and carry
+its GPL terms rather than this repository's Apache-2.0 ones, which is why they
+are not stored here. The build procedure and the per-target audit steps are in
+[`src/kernelsu/README.md`](src/kernelsu/README.md).
 
 The firmware-to-target procedure is recorded in
 [`docs/PORTING.md`](docs/PORTING.md), which still describes the previous layout
