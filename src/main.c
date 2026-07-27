@@ -217,6 +217,7 @@ int run_exploit(int argc, char **argv) {
   set_limit();
   log_startup_context();
   init_ashmem_path();
+  init_configfs_read_iter();
 
   pin_to_core(CORE);
   if (!slide_leak_kernel_base()) {

