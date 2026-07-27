@@ -18,7 +18,7 @@ It intentionally does not contain Android application source code.
 | `pa3q-S938NKSUACZF1` | Galaxy S25 Ultra `SM-S938N` | `BP4A.251205.006.S938NKSUACZF1` | `android15-6.6` | Device-tested |
 | `pa3q-S9380ZHUBCZF1` | Galaxy S25 Ultra `SM-S9380` | `BP4A.251205.006.S9380ZHUBCZF1` | `android15-6.6` | Device-tested |
 | `e3q-S928USQS6DZF2` | Galaxy S24 Ultra `SM-S928U/SM-S928U1` (Snapdragon 8 Gen 3) | `BP4A.251205.006.S928USQS6DZF2` | `6.1.145-android14-11-33419968-abS928USQS6DZF2` | Hardware debugging in progress |
-| `pmg110-16.0.9.400` | OPPO PMG110 / K15 Pro+ (MediaTek MT6991) | `PMG110_16.0.9.400(CN01)` | `6.6.118-android15-8-...-abogki500782043-4k` | Offsets cross-checked against a verified port, module audited against the target kernel; hardware bring-up pending |
+| `pmg110-16.0.9.400` | OPPO PMG110 / K15 Pro+ (MediaTek MT6991) | `PMG110_16.0.9.400(CN01)` | `6.6.118-android15-8-...-abogki500782043-4k` | **Panics this device** — the payload adds the virtual KASLR slide to physmap aliases. No feed entry. See the profile doc |
 
 Profiles are exact-firmware profiles. A matching model with a different build
 is not equivalent and must be ported separately.
