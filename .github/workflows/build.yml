@@ -1,0 +1,147 @@
+name: build payloads
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # Pin the NDK: the payload is a fixed-size blob and the app checks that size,
+  # so the toolchain is part of the artifact's identity, not an implementation
+  # detail of the runner.
+  NDK_VERSION: r29
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    outputs:
+      profiles: ${{ steps.list.outputs.profiles }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: list
+        # Every directory under src/targets is a profile; nothing to keep in
+        # sync by hand when one is added.
+        run: |
+          profiles=$(ls src/targets | jq -R -s -c 'split("\n") | map(select(length > 0))')
+          echo "profiles=$profiles" >> "$GITHUB_OUTPUT"
+          echo "$profiles"
+
+  build:
+    needs: discover
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: ${{ fromJson(needs.discover.outputs.profiles) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: nttld/setup-ndk@v1
+        id: ndk
+        with:
+          ndk-version: ${{ env.NDK_VERSION }}
+          local-cache: true
+
+      - name: Build ${{ matrix.profile }}
+        env:
+          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
+        run: |
+          make TARGET=${{ matrix.profile }}
+          make TARGET=${{ matrix.profile }} release
+
+      # The Makefile already fails the build if the release payload exceeds the
+      # fixed size, then pads to it. Re-assert the final size here so a change
+      # to that rule cannot pass unnoticed: the app downloads a fixed-length
+      # blob and a mismatch is a runtime failure on the device, not a build one.
+      - name: Check release payload size
+        run: |
+          expected=$(grep -oP '^APP_RELEASE_SIZE\s*:=\s*\K[0-9]+' Makefile)
+          actual=$(stat -c %s build/${{ matrix.profile }}/cve-2026-43499-app.release.so)
+          echo "expected=$expected actual=$actual"
+          test "$actual" = "$expected"
+
+      # Reported, not enforced. The committed artifacts were produced with an
+      # NDK that does not byte-match r29, so making this a gate would fail every
+      # existing profile. It still answers the question worth asking on each
+      # push: does the checked-in blob correspond to the checked-in source?
+      - name: Compare against the committed artifact
+        continue-on-error: true
+        run: |
+          committed=artifacts/${{ matrix.profile }}/cve-2026-43499-app.so
+          built=build/${{ matrix.profile }}/cve-2026-43499-app.release.so
+          if [ ! -f "$committed" ]; then
+            echo "::notice::no committed artifact for ${{ matrix.profile }}"
+            exit 0
+          fi
+          if cmp -s "$built" "$committed"; then
+            echo "::notice::${{ matrix.profile }} artifact reproduces byte-for-byte"
+          else
+            echo "::warning::${{ matrix.profile }} artifact differs from a fresh $NDK_VERSION build"
+            echo "  committed $(sha256sum "$committed" | cut -d' ' -f1)"
+            echo "  built     $(sha256sum "$built"     | cut -d' ' -f1)"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.profile }}
+          path: |
+            build/${{ matrix.profile }}/cve-2026-43499
+            build/${{ matrix.profile }}/cve-2026-43499-app.so
+            build/${{ matrix.profile }}/cve-2026-43499-app.release.so
+            build/${{ matrix.profile }}/cve-2026-43499-root
+          if-no-files-found: error
+
+  feed:
+    # The app resolves the repository's current commit and then fetches
+    # support/targets-v2.json plus every artifact from it, so a malformed feed
+    # or a profile whose artifact is missing breaks installs at run time.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate support/targets-v2.json
+        run: |
+          python3 - <<'PY'
+          import json, os, sys
+          d = json.load(open('support/targets-v2.json'))
+          assert d['schemaVersion'] == 2, d['schemaVersion']
+          required = ['profileId','manufacturer','model','device','kernelRelease',
+                      'kernelVersion','kernelBuildVersion','buildDisplay',
+                      'buildFingerprint','sdk','abi','pageSize','exploit','kernelsu']
+          bad = 0
+          seen = set()
+          for t in d['targets']:
+              missing = [k for k in required if k not in t]
+              if missing:
+                  print(f"{t.get('profileId','?')}: missing {missing}"); bad += 1
+              pid = t.get('profileId')
+              if pid in seen:
+                  print(f"{pid}: duplicate profileId"); bad += 1
+              seen.add(pid)
+              # kernelRelease must be the prefix of the full /proc/version line,
+              # otherwise the two matching predicates disagree with each other
+              if t['kernelRelease'] not in t['kernelVersion']:
+                  print(f"{pid}: kernelRelease not present in kernelVersion"); bad += 1
+              if t['kernelBuildVersion'] not in t['kernelVersion']:
+                  print(f"{pid}: kernelBuildVersion not present in kernelVersion"); bad += 1
+              art = f"artifacts/{pid}/cve-2026-43499-app.so"
+              if not os.path.exists(art):
+                  print(f"{pid}: {art} missing"); bad += 1
+              elif os.path.getsize(art) != t['exploit']['size']:
+                  print(f"{pid}: exploit.size {t['exploit']['size']} != {os.path.getsize(art)}"); bad += 1
+          print(f"{len(d['targets'])} profiles checked, {bad} problem(s)")
+          sys.exit(1 if bad else 0)
+          PY
+
+      - name: Report profiles with no feed entry
+        run: |
+          feed=$(python3 -c "import json;print(' '.join(t['profileId'] for t in json.load(open('support/targets-v2.json'))['targets']))")
+          for p in $(ls src/targets); do
+            case " $feed " in
+              *" $p "*) ;;
+              *) echo "::notice::profile $p builds but has no support/targets-v2.json entry" ;;
+            esac
+          done
