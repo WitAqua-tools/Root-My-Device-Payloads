@@ -136,6 +136,29 @@ jobs:
           sys.exit(1 if bad else 0)
           PY
 
+      # The app rewrites every feed URL from the mutable /main/ form onto the
+      # commit it resolved, and require()s that each one starts with its own
+      # RAW_REPOSITORY prefix. So a fork that repoints PayloadRepository.kt but
+      # not this file -- or the reverse -- fails every install at run time with
+      # nothing to show for it. Anchor the URLs to the repository they live in.
+      - name: Check feed URLs point at this repository
+        run: |
+          expected="https://raw.githubusercontent.com/$GITHUB_REPOSITORY/main/"
+          echo "expected prefix: $expected"
+          python3 - "$expected" <<'PY'
+          import json, sys
+          expected = sys.argv[1]
+          bad = 0
+          for t in json.load(open('support/targets-v2.json'))['targets']:
+              for field in ('exploit', 'kernelsu'):
+                  url = t[field]['url']
+                  if not url.startswith(expected):
+                      print(f"{t['profileId']}.{field}: {url}")
+                      bad += 1
+          print(f"{bad} URL(s) not anchored to this repository")
+          sys.exit(1 if bad else 0)
+          PY
+
       - name: Report profiles with no feed entry
         run: |
           feed=$(python3 -c "import json;print(' '.join(t['profileId'] for t in json.load(open('support/targets-v2.json'))['targets']))")
