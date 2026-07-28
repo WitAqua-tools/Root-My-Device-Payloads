@@ -612,6 +612,13 @@ static int client_main(int argc, char **argv) {
     return 1;
   }
   close(conn);
+  /* A late-load reports here rather than where it happened: it reloads the
+   * sepolicy partway through, and from then on the daemon side is writing to
+   * descriptors this process owns but its domain no longer may. This side is
+   * the caller, so this line always arrives. */
+  if (argc >= 2 && strcmp(argv[1], "--late-load") == 0) {
+    su_late_load_report(response.status, STDERR_FILENO);
+  }
   return response.status;
 }
 

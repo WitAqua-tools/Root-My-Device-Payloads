@@ -79,6 +79,14 @@ void close_request_fds(struct su_request *request);
 int su_run_late_load(struct su_request *request, int conn);
 
 /*
+ * The other half of that: the line the caller reads. The status is the only
+ * thing that survives the sepolicy reload the load itself performs, so the
+ * client prints the outcome from the status rather than the daemon printing it
+ * down descriptors that stop working mid-operation. See late_load.c.
+ */
+void su_late_load_report(int status, int fd);
+
+/*
  * hold_refs.c. Serves the 'H' opcode: takes file descriptors over the
  * connection and never closes them. Only core66 sends it.
  */
