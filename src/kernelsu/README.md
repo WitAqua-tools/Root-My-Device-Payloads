@@ -43,6 +43,37 @@ once the module is active. The bootstrap helper in
 so a build without this set cannot install on any device. It also carries the
 include paths a module built out of a DDK image needs.
 
+**`common` also stops a late-load from running module stage scripts.** A module
+script assumes what a boot gives it: its own module mount already established,
+and no framework running yet. A late-load has neither — there is no metamodule
+to mount anything, and zygote has been serving for minutes. What the scripts do
+instead is start daemons against a live zygote, and those daemons restart it to
+inject. On warhol that killed the device every time: `system_server` came back
+and died in `ApplicationSharedMemory.nativeCreate` with `ENOENT`, seven seconds
+after the module loaded, on every retry until a reboot — while `ksud` itself
+exited `0` and KernelSU answered its control ioctl throughout. Measured, not
+inferred: with the same build and the same three Zygisk modules left in place
+and enabled, skipping the scripts alone keeps `system_server` at its original
+pid.
+
+`KSU_LATE_LOAD_MODULES=1` in `ksud`'s environment runs them anyway. It is a
+bring-up knob, not a user setting: `ksud` is `execl`'d by the bootstrap helper
+and inherits the daemon's environment, so reaching it means editing
+`su_daemon.c`'s `set_root_env()` or the helper. Neither `su --late-load`, the
+feed, nor the application can set it as things stand.
+
+The set carries two smaller things with it. `late_load` rejoins init's mount
+namespace before touching modules, because the caller has to exec it from a
+throwaway private namespace and every mount made in that one dies with the
+process — that is not what fixed the crash above, and is kept because it is
+right, not because it was shown to help. And it logs one line naming what the
+module reports, so a run has evidence of KernelSU being live that does not
+depend on descriptors the sepolicy reload takes away:
+
+```text
+KernelSU live: version=30001 uapi=2 flags=0x5 features=0x5 late_load=true
+```
+
 **`galaxy` exists because a generic build panics on Samsung firmware**: an
 inline `put_cred()` writes directly to a KDP-protected credential refcount, RKP
 rejects the write to an unused syscall-table slot while the generic code still
