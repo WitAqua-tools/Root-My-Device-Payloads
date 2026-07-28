@@ -21,7 +21,7 @@ and published as a release asset — see [Feed delivery](#feed-delivery).
 
 | Target | Device | SoC | Region | Firmware | Kernel | Fingerprint | Status |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `pmg110-cn-16.0.9.400` | OPPO PMG110 / K15 Pro+ | MediaTek MT6991 | CN | `PMG110_16.0.9.400(CN01)` | `6.6.118-android15-8-g93e223c276e7-abogki500782043-4k` (`android15-6.6`, 4K pages) | `OPPO/PMG110/OP61E5L1:16/BP2A.250605.015/B.c24acd_188efc3_187038b:user/release-keys` | Exploit core device-verified through the non-app build; the app payload and its feed entry are outstanding. See [the profile doc](docs/PMG110-16.0.9.400.md) |
+| `pmg110-cn-16.0.9.400` | OPPO PMG110 / K15 Pro+ | MediaTek MT6991 | CN | `PMG110_16.0.9.400(CN01)` | `6.6.118-android15-8-g93e223c276e7-abogki500782043-4k` (`android15-6.6`, 4K pages) | `OPPO/PMG110/OP61E5L1:16/BP2A.250605.015/B.c24acd_188efc3_187038b:user/release-keys` | Exploit core device-verified through the non-app build; the feed entry ships, but the app payload has not completed a run here. See [the profile doc](docs/PMG110-16.0.9.400.md) |
 
 The Samsung profiles this repository began with were removed along with their
 payloads, artifacts, KernelSU builds and feed entries. What remains is built
@@ -32,10 +32,12 @@ Targets are exact-firmware targets. A matching model with a different build is
 not equivalent and must be ported separately.
 
 Root My Device requires both the exact `uname -r` value in `kernelRelease` and
-the complete `/proc/version` value in `kernelVersion`. This distinguishes vendor
-kernels that expose the same release string but were linked from different
-builds. Model, device, SoC and region are descriptive metadata; build display
-ID, SDK, ABI, and page size remain part of automatic target selection.
+the exact `uname -v` value in `kernelBuildVersion`. The second distinguishes
+vendor kernels that expose the same release string but were linked from
+different builds. `kernelVersion` is the whole `/proc/version` line the other
+two are read off; it is carried in the feed for the record and the app does not
+match on it. Model, device, SoC and region are descriptive metadata; build
+display ID, SDK, ABI, and page size remain part of automatic target selection.
 
 The port is based on the exploit source published at
 <https://github.com/NebuSec/CyberMeowfia/tree/main/IonStack/CVE-2026-43499/exploit>.
@@ -76,10 +78,14 @@ with the sizes and URLs of what the build matrix actually produced. The same
 script emits the build matrices, so no other file has to know how a target maps
 onto a path.
 
-`kernelVersion` and `kernelBuildVersion` have to be captured from a running
-device (`adb shell cat /proc/version`) — they cannot be derived from a firmware
-image. A target whose `kernelVersion` is `null` still builds, but is reported
-and left out of the feed, because the app matches on those exact strings.
+`kernelVersion` and `kernelBuildVersion` are the kernel's own `linux_banner` and
+`UTS_VERSION`. `adb shell cat /proc/version` on the device prints the first and
+contains the second; both can also be read out of the boot image's kernel, which
+is where this repository's values came from when no device was to hand. Reading
+them from an image proves what that image would print, not that the slot the
+device boots is the one that was read — prefer the device where there is one. A
+target whose `kernelVersion` is `null` still builds, but is reported and left out
+of the feed, because the app matches on those exact strings.
 
 Per-artifact SHA-256 fields and manifest signatures are not part of feed schema
 version 2.

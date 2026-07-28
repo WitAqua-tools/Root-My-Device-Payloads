@@ -11,10 +11,13 @@
     "reads. See the repository README.",
     "",
     "kernelVersion is the complete /proc/version line and kernelBuildVersion is",
-    "the '#<n> SMP ...' part of it. Both must be captured from a running device",
-    "(`adb shell cat /proc/version`) -- they cannot be derived from a firmware",
-    "image. A target whose kernelVersion is null is carried here but left out",
-    "of the feed, because the app matches on those exact strings."
+    "the '#<n> SMP ...' part of it. `adb shell cat /proc/version` on the device",
+    "is the direct way to get them; both are also the kernel's own linux_banner",
+    "and UTS_VERSION, so they can be read out of the boot image when no device",
+    "is at hand -- that only proves what the image would print, not what the",
+    "slot the device actually boots does. A target whose kernelVersion is null",
+    "is carried here but left out of the feed, because the app matches on those",
+    "exact strings."
   ],
   "schemaVersion": 1,
   "targets": [
@@ -28,14 +31,14 @@
       "marketingName": "OPPO K15 Pro+",
       "soc": "MediaTek MT6991",
       "kernelRelease": "6.6.118-android15-8-g93e223c276e7-abogki500782043-4k",
-      "kernelVersion": null,
-      "kernelBuildVersion": null,
+      "kernelVersion": "Linux version 6.6.118-android15-8-g93e223c276e7-abogki500782043-4k (kleaf@build-host) (Android (11368308, +pgo, +bolt, +lto, +mlgo, based on r510928) clang version 18.0.0 (https://android.googlesource.com/toolchain/llvm-project 477610d4d0d988e69dbc3fae4fe86bff3f07f2b5), LLD 18.0.0) #1 SMP PREEMPT Wed Apr  8 15:08:30 UTC 2026",
+      "kernelBuildVersion": "#1 SMP PREEMPT Wed Apr  8 15:08:30 UTC 2026",
       "buildDisplay": "PMG110_16.0.9.400(CN01)",
       "buildFingerprint": "OPPO/PMG110/OP61E5L1:16/BP2A.250605.015/B.c24acd_188efc3_187038b:user/release-keys",
       "sdk": 36,
       "abi": "arm64-v8a",
       "pageSize": 4096,
-      "status": "the LD_PRELOAD build roots this device; the app payload the feed serves still cross-checks the slide against slide_p0_offset, which is two numbers here and one on Samsung"
+      "status": "the LD_PRELOAD build roots this device end to end; the app payload the feed serves has not completed a run here, its P0 oracle being the untested part, and kernelVersion / kernelBuildVersion are read out of boot.img rather than captured from the device"
     }
   ]
 }
