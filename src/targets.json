@@ -45,7 +45,7 @@
       "sdk": 36,
       "abi": "arm64-v8a",
       "pageSize": 4096,
-      "status": "the LD_PRELOAD build roots this device end to end; the app payload the feed serves has not completed a run here -- until the dangling mini_adb_shell reference was removed from core66 it could not even be dlopen'd, and its P0 oracle is still untested -- and kernelVersion / kernelBuildVersion are read out of boot.img rather than captured from the device"
+      "status": "the LD_PRELOAD build roots this device end to end; the app payload the feed serves has not completed a run here -- until the dangling mini_adb_shell reference was removed from core66 it could not even be dlopen'd -- and kernelVersion / kernelBuildVersion are read out of boot.img rather than captured from the device"
     },
     {
       "profileId": "warhol-jp-OS3.0.304.0.WPSJPXM",
