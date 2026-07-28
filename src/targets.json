@@ -46,6 +46,26 @@
       "abi": "arm64-v8a",
       "pageSize": 4096,
       "status": "the LD_PRELOAD build roots this device end to end; the app payload the feed serves has not completed a run here -- until the dangling mini_adb_shell reference was removed from core66 it could not even be dlopen'd, and its P0 oracle is still untested -- and kernelVersion / kernelBuildVersion are read out of boot.img rather than captured from the device"
+    },
+    {
+      "profileId": "warhol-jp-OS3.0.304.0.WPSJPXM",
+      "payload": "CVE-2026-43499",
+      "core": "core612",
+      "device": "warhol",
+      "region": "JP",
+      "manufacturer": "Xiaomi",
+      "model": "Xiaomi 17T Pro",
+      "marketingName": "Xiaomi 17T Pro",
+      "soc": "MediaTek MT6993",
+      "kernelRelease": "6.12.38-android16-5-g1d46253471dd-ab15048002-4k",
+      "kernelVersion": "Linux version 6.12.38-android16-5-g1d46253471dd-ab15048002-4k (kleaf@build-host) (Android (14043575, +pgo, +bolt, +lto, +mlgo, based on r536225) clang version 19.0.1 (https://android.googlesource.com/toolchain/llvm-project b3a530ec6537146650e42be89f1089e9a3588460), LLD 19.0.1) #1 SMP PREEMPT Wed Mar 18 02:21:10 UTC 2026",
+      "kernelBuildVersion": "#1 SMP PREEMPT Wed Mar 18 02:21:10 UTC 2026",
+      "buildDisplay": "OS3.0.304.0.WPSJPXM",
+      "buildFingerprint": "Xiaomi/warhol_jp/warhol:16/BP2A.250605.031.A3/OS3.0.304.0.WPSJPXM:user/release-keys",
+      "sdk": 36,
+      "abi": "arm64-v8a",
+      "pageSize": 4096,
+      "status": "the LD_PRELOAD build roots this device on the first attempt, and kernelRelease / kernelVersion / kernelBuildVersion / buildFingerprint are captured from it; the app payload has not run here, and buildDisplay is the one matching field never read off the device -- confirm it with `adb shell getprop ro.build.display.id` before trusting automatic selection"
     }
   ]
 }

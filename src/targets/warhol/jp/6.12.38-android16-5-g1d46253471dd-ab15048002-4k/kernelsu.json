@@ -1,0 +1,29 @@
+{
+  "$comment": [
+    "The KernelSU late-load build this target pairs with. CI rebuilds it from",
+    "the src/kernelsu submodule; nothing is committed as a binary.",
+    "",
+    "'id' names the published assets (ksud-<id>, kernelsu-<id>.ko). Targets that",
+    "load the same module share one id and are built once.",
+    "",
+    "'kernelRelease' is the exact UTS release the module must report in its",
+    "vermagic. The DDK image ships its own release string, so the build",
+    "overwrites the generated utsrelease.h and kernel.release with this value",
+    "before compiling.",
+    "",
+    "This is the first android16-6.12 build in the repository -- every other",
+    "target is android15-6.6 -- so it is the first to use that DDK image.",
+    "",
+    "'patchSets' names the patch sets this build takes on top of common, as",
+    "directories under the patch submodule's patches/. warhol takes none: it",
+    "has no KDP/RKP/DEFEX, so it builds against a tree carrying only common,",
+    "whose staged late-load the bootstrap helper drives."
+  ],
+  "id": "warhol",
+  "kmi": "android16-6.12",
+  "ddkImage": "ghcr.io/ylarod/ddk-min:android16-6.12-20260313",
+  "kernelRelease": "6.12.38-android16-5-g1d46253471dd-ab15048002-4k",
+  "patchSets": [],
+  "config": [],
+  "managerPackage": "me.weishu.kernelsu"
+}
