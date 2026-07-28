@@ -50,6 +50,10 @@ FIELD_TYPES = {"sdk": int, "pageSize": int}
 # Captured from a running device, not derivable from a firmware image.
 DEVICE_ONLY_FIELDS = ["kernelVersion", "kernelBuildVersion"]
 
+# Where the KernelSU patch sets live. A kernelsu.json names the ones its build
+# takes on top of common, as directory names under this.
+PATCH_SETS_DIR = Path("src/kernelsu/Root-My-Device-KSU/patches")
+
 
 class Problems:
     def __init__(self) -> None:
@@ -82,6 +86,38 @@ def ksud_asset_name(build_id: str) -> str:
 
 def download_url(repository: str, tag: str, name: str) -> str:
     return f"https://github.com/{repository}/releases/download/{tag}/{name}"
+
+
+def check_patch_sets(root: Path, label: str, build: dict, problems: Problems) -> None:
+    """Check the KernelSU patch sets a build names on top of common.
+
+    The build action fails on a set it cannot find, which is where a wrong name
+    really matters; this is what makes the same mistake fail in seconds, before
+    a matrix of kernel builds. CI checks the patch submodule out for exactly
+    that reason, but a working copy without it is a normal thing to run this
+    from, so an absent patches/ is not itself a problem.
+    """
+    sets = build.get("patchSets", [])
+    if not isinstance(sets, list) or not all(isinstance(name, str) for name in sets):
+        problems.add(f"{label}: kernelsu.json patchSets must be a list of strings")
+        return
+
+    patches = root / PATCH_SETS_DIR
+    for name in sets:
+        if name == "common":
+            problems.add(f"{label}: patchSets names 'common', which every build takes anyway")
+            continue
+        # The action takes these space-separated, and resolves each under
+        # patches/, so neither a name with a space in it nor one that climbs out
+        # of that directory is a set it could apply.
+        if not name or any(character.isspace() for character in name):
+            problems.add(f"{label}: patch set {name!r} is not a usable directory name")
+            continue
+        if name.startswith("/") or ".." in Path(name).parts:
+            problems.add(f"{label}: patch set {name!r} points outside {PATCH_SETS_DIR}")
+            continue
+        if patches.is_dir() and not any((patches / name).glob("*.patch")):
+            problems.add(f"{label}: patch set {name!r} has no patches at {PATCH_SETS_DIR / name}")
 
 
 def load_sources(root: Path, problems: Problems) -> list[dict]:
@@ -129,6 +165,7 @@ def load_sources(root: Path, problems: Problems) -> list[dict]:
             continue
         target["_kernelsu"] = json.loads(kernelsu_path.read_text(encoding="utf-8"))
         target["_dir"] = directory
+        check_patch_sets(root, label, target["_kernelsu"], problems)
 
         if not (payloads_dir / target["payload"]).is_dir():
             problems.add(f"{label}: payload {target['payload']!r} has no src/payloads directory")
@@ -149,6 +186,34 @@ def load_sources(root: Path, problems: Problems) -> list[dict]:
 
 def feed_ready(target: dict) -> bool:
     return all(target.get(field) for field in DEVICE_ONLY_FIELDS)
+
+
+def kernelsu_builds(targets: list[dict], problems: Problems) -> list[dict]:
+    """The KernelSU build matrix: one entry per id, however many targets take it."""
+    builds: dict[str, dict] = {}
+    for target in targets:
+        build = dict(target["_kernelsu"])
+        build.pop("$comment", None)
+        # A build that names no patch set is still a build: the action always
+        # applies common, and the workflow joins this into one of its inputs.
+        build.setdefault("patchSets", [])
+        existing = builds.get(build["id"])
+        if existing is None:
+            builds[build["id"]] = build | {"feed": False}
+        elif {key: value for key, value in existing.items() if key != "feed"} != build:
+            # One id is one module, built once. Two targets that describe it
+            # differently -- a patch set one takes and the other does not, most
+            # likely -- would silently get whichever was read first, so say so
+            # instead. What they want is separate ids.
+            problems.add(
+                f"{target['profileId']}: build id {build['id']!r} is described "
+                "differently by another target"
+            )
+        # Whether anything that can reach the feed depends on this build, which
+        # is what decides if a failure to produce it can hold up a release.
+        if feed_ready(target):
+            builds[build["id"]]["feed"] = True
+    return list(builds.values())
 
 
 def report_pending(targets: list[dict]) -> None:
@@ -187,10 +252,21 @@ def main() -> int:
         print(f"{len(problems.messages)} problem(s) in src/targets.json", file=sys.stderr)
         return 1
 
+    # Not only for --emit kernelsu: a target and the module it loads are
+    # hand-authored together, so a disagreement between them belongs to the
+    # check that runs before anything is built.
+    builds = kernelsu_builds(targets, problems)
+    if problems:
+        print(f"{len(problems.messages)} problem(s) in the KernelSU builds", file=sys.stderr)
+        return 1
+
     if args.emit == "validate":
         report_pending(targets)
         ready = [t for t in targets if feed_ready(t)]
-        print(f"{len(targets)} target(s) validated, {len(ready)} ready for the feed")
+        print(
+            f"{len(targets)} target(s) validated, {len(ready)} ready for the feed, "
+            f"{len(builds)} KernelSU build(s)"
+        )
         return 0
 
     if args.emit == "targets":
@@ -209,16 +285,7 @@ def main() -> int:
         return 0
 
     if args.emit == "kernelsu":
-        # Targets that load the same module share one build; emit it once, and
-        # record whether anything that can reach the feed depends on it.
-        builds: dict[str, dict] = {}
-        for target in targets:
-            build = dict(target["_kernelsu"])
-            build.pop("$comment", None)
-            existing = builds.setdefault(build["id"], build | {"feed": False})
-            if feed_ready(target):
-                existing["feed"] = True
-        print(json.dumps(list(builds.values()), separators=(",", ":")))
+        print(json.dumps(builds, separators=(",", ":")))
         return 0
 
     report_pending(targets)

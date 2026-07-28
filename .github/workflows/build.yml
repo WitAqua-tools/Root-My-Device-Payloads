@@ -27,6 +27,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The patch submodule only, which is a handful of text files: it is what
+      # lets a target naming a patch set that does not exist fail in this job
+      # rather than inside the kernel build that would have applied it. The
+      # KernelSU checkout is not needed to validate anything.
+      - name: Check out the patch submodule
+        run: git submodule update --init --depth 1 src/kernelsu/Root-My-Device-KSU
+
       # Fail here, in seconds, rather than after a matrix of kernel builds.
       # Everything checked at this point is hand-authored, so a mistake in it
       # cannot be caught by any later step that only inspects binaries.
@@ -147,6 +154,7 @@ jobs:
           ddk-image: ${{ matrix.build.ddkImage }}
           kernel-release: ${{ matrix.build.kernelRelease }}
           config: ${{ join(matrix.build.config, ' ') }}
+          patch-sets: ${{ join(matrix.build.patchSets, ' ') }}
           ndk-version: ${{ env.NDK_VERSION }}
       - uses: actions/upload-artifact@v4
         with:
@@ -177,6 +185,7 @@ jobs:
           ddk-image: ${{ matrix.build.ddkImage }}
           kernel-release: ${{ matrix.build.kernelRelease }}
           config: ${{ join(matrix.build.config, ' ') }}
+          patch-sets: ${{ join(matrix.build.patchSets, ' ') }}
           ndk-version: ${{ env.NDK_VERSION }}
       - uses: actions/upload-artifact@v4
         with:

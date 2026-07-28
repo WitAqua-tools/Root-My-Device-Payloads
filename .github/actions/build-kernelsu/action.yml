@@ -21,8 +21,10 @@ inputs:
     description: space-separated kernel config options for this build, may be empty
     required: false
     default: ""
-  target-dir:
-    description: target directory that may carry extra patches for this build
+  patch-sets:
+    description: >
+      space-separated patch sets this build takes on top of common, named as
+      directories under the patch submodule's patches/, may be empty
     required: false
     default: ""
   ndk-version:
@@ -38,25 +40,44 @@ runs:
     #
     # They live in their own repository because they are a derivative work of
     # KernelSU and carry its GPL terms rather than this repository's Apache-2.0
-    # ones. Root-My-Device-KSU holds what every build needs -- the staged
-    # late-load the bootstrap helper drives -- and a target may add its own on
-    # top.
+    # ones -- device-specific ones included, which is why none of them live
+    # beside the target here.
+    #
+    # patches/common is what no target can boot without and goes on every
+    # build. Everything else is a set the build named in its kernelsu.json, so
+    # a vendor's workarounds are not even present in the tree of a build that
+    # is not that vendor's.
     - name: Apply the KernelSU patches
       shell: bash
+      env:
+        PATCH_SETS: ${{ inputs.patch-sets }}
       run: |
         shopt -s nullglob
-        patches=(src/kernelsu/Root-My-Device-KSU/patches/*.patch)
-        if [ -n '${{ inputs.target-dir }}' ]; then
-          patches+=('${{ inputs.target-dir }}'/kernelsu/*.patch)
-        fi
-        if [ ${#patches[@]} -eq 0 ]; then
-          echo "::error::no patches found; the staged late-load is required"
+        root=src/kernelsu/Root-My-Device-KSU/patches
+
+        if [ ! -d "$root" ]; then
+          echo "::error::$root is missing; check out the submodules"
           exit 1
         fi
-        for patch in "${patches[@]}"; do
-          echo "applying $patch"
-          git -C src/kernelsu/KernelSU apply --check "$GITHUB_WORKSPACE/$patch"
-          git -C src/kernelsu/KernelSU apply "$GITHUB_WORKSPACE/$patch"
+
+        apply_set() {
+          local set=$1 patches=("$root/$1"/*.patch)
+          if [ ${#patches[@]} -eq 0 ]; then
+            echo "::error::patch set '$set' has no patches at $root/$set"
+            exit 1
+          fi
+          for patch in "${patches[@]}"; do
+            echo "applying $patch"
+            git -C src/kernelsu/KernelSU apply --check "$GITHUB_WORKSPACE/$patch"
+            git -C src/kernelsu/KernelSU apply "$GITHUB_WORKSPACE/$patch"
+          done
+        }
+
+        # common first and unconditionally: the staged late-load is required,
+        # and the sets are written against a tree that already has it.
+        apply_set common
+        for set in $PATCH_SETS; do
+          apply_set "$set"
         done
 
     - name: Install NDK ${{ inputs.ndk-version }}
