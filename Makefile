@@ -6,19 +6,32 @@ API ?= 35
 TARGET ?= pmg110/cn/6.6.118-android15-8-g93e223c276e7-abogki500782043-4k
 PAYLOAD ?= CVE-2026-43499
 
+# Which exploit core the target's kernel needs. The attack chain is fixed to a
+# GKI branch rather than to a SoC, so a target on a different kernel series
+# needs a different core, not a different set of offsets:
+#
+#   core66   android15-6.6, from pmg110-root
+#   core612  android16-6.12, from warhol-root (upstream popsicle plus its MTE fix)
+#
+# It is declared per target in src/targets.json and CI passes it down, so the
+# default here only matters for a hand-typed build.
+CORE ?= core66
+
 TARGET_DIR := src/targets/$(TARGET)
-TARGET_HEADER_NAME ?= target-core66.h
+# One header per core, because a core reads offsets the other has never heard
+# of; naming it after the core keeps both in the same target directory.
+TARGET_HEADER_NAME ?= target-$(CORE).h
 TARGET_HEADER := $(TARGET_DIR)/$(TARGET_HEADER_NAME)
 TARGET_INCLUDE := targets/$(TARGET)/$(TARGET_HEADER_NAME)
 PAYLOAD_DIR := src/payloads/$(PAYLOAD)
-CORE_DIR := $(PAYLOAD_DIR)/core66
+CORE_DIR := $(PAYLOAD_DIR)/$(CORE)
 HELPER_DIR := src/payloads/su_daemon
 
-# The bootstrap helper depends on no target -- one binary serves every one of
-# them and the application ships that one copy in its APK. The two things that
-# did know better than that are separated out: late_load.c is all it knows
-# about KernelSU, and hold_refs.c is the kernel-page reference holder that
-# exists for the exploit's sake alone.
+# The bootstrap helper depends on neither the target nor the core -- one binary
+# serves every target and the application ships that one copy in its APK. The
+# two things that did know better than that are separated out: late_load.c is
+# all it knows about KernelSU, and hold_refs.c is core66's kernel-page
+# reference holder, unreachable on any other core.
 HELPER_SRCS := \
   $(HELPER_DIR)/su_daemon.c \
   $(HELPER_DIR)/late_load.c \
@@ -37,6 +50,10 @@ ifeq ($(wildcard $(TARGET_HEADER)),)
 $(error no $(TARGET_HEADER_NAME) at $(TARGET_DIR) -- TARGET is <device>/<region>/<kernel release>)
 endif
 
+ifeq ($(wildcard $(CORE_DIR)),)
+$(error no $(CORE) core at $(PAYLOAD_DIR) -- CORE names a directory under the payload)
+endif
+
 # Artifact names follow the payload, so a second payload does not collide with
 # this one in build/ or in the flat release-asset namespace.
 PAYLOAD_SLUG := $(shell echo '$(PAYLOAD)' | tr 'A-Z' 'a-z')
@@ -47,21 +64,34 @@ APP_RELEASE := $(OUTDIR)/$(PAYLOAD_SLUG)-app.release.so
 APP_RELEASE_SIZE := 104128
 ROOT_HELPER := $(OUTDIR)/$(PAYLOAD_SLUG)-root
 
-# The exploit core is core66/, which is pmg110-root's -- the tree that roots
-# this device. root.c is this repository's own and stays: it is the
-# usermodehelper route that gets the app's helper exec'd as root, which is what
-# makes -c and --late-load available. install_android_root(int fd) is the seam.
-PRELOAD_SRCS := \
+# Both cores are imported trees; nothing under $(CORE_DIR) is this
+# repository's own work, and each is kept as close to the port it came from as
+# it can be. core612 is byte-identical to warhol-root. core66 carries two
+# deltas against pmg110-root, both listed in the README. What *is* this
+# repository's own is the root glue and the supervisor:
+#
+#   root-<core>.c  how that core gets the bootstrap helper resident as root.
+#                  core66 queues a usermodehelper work item from an
+#                  unprivileged process (install_android_root); core612 is
+#                  already root and execs it (install_embedded_su). One is
+#                  linked per build.
+#   preload.c      the retry supervisor, shared by both.
+#
+# payload.h is the seam between them.
+CORE_SRCS := \
   $(CORE_DIR)/main.c \
   $(CORE_DIR)/util.c \
   $(CORE_DIR)/slide.c \
   $(CORE_DIR)/fops.c \
-  $(CORE_DIR)/pipe.c \
-  $(PAYLOAD_DIR)/root.c \
+  $(CORE_DIR)/pipe.c
+
+PRELOAD_SRCS := \
+  $(CORE_SRCS) \
+  $(PAYLOAD_DIR)/root-$(CORE).c \
   $(PAYLOAD_DIR)/preload.c
 
 APP_PRELOAD_SRCS := $(PRELOAD_SRCS)
-PAYLOAD_DEPS := $(TARGET_HEADER) \
+PAYLOAD_DEPS := $(TARGET_HEADER) $(PAYLOAD_DIR)/payload.h \
   $(wildcard $(CORE_DIR)/*.h $(CORE_DIR)/kernelsnitch/*.h)
 
 # -Isrc resolves the "targets/<...>/<header>" form that core66/offset.h
@@ -71,10 +101,21 @@ PAYLOAD_DEPS := $(TARGET_HEADER) \
 # the target header names as a sibling. That last one is why a target header
 # does not have to spell out its own path: such an include expands inside a core
 # .c file and would otherwise be resolved against the core directory.
+# -I$(PAYLOAD_DIR) is for payload.h, which the glue and the supervisor share and
+# which no core knows about.
+
+# core66's offset.h names the target header through TARGET_HEADER; core612 came
+# from popsicle, whose offset.h names it through TARGET_CONFIG_H. Defining both
+# to the same include is what lets each core stay exactly as it was imported --
+# editing one to agree with the other is how a foreign kernel's constants got
+# into a core last time.
+TARGET_HEADER_DEFINES := \
+  -DTARGET_HEADER='"$(TARGET_INCLUDE)"' -DTARGET_CONFIG_H='"$(TARGET_INCLUDE)"'
+
 COMMON_CFLAGS := \
   -O2 -g0 -Wall -Wextra \
   -Wno-unused-parameter -Wno-sign-compare \
-  -I$(CORE_DIR) -I$(TARGET_DIR) -Isrc -DTARGET_HEADER='"$(TARGET_INCLUDE)"'
+  -I$(CORE_DIR) -I$(PAYLOAD_DIR) -I$(TARGET_DIR) -Isrc $(TARGET_HEADER_DEFINES)
 
 .DEFAULT_GOAL := all
 
@@ -104,7 +145,8 @@ $(APP_RELEASE): $(APP_PRELOAD_SRCS) $(PAYLOAD_DEPS) | $(OUTDIR)
 	  -fno-unwind-tables -fno-asynchronous-unwind-tables \
 	  -ffunction-sections -fdata-sections \
 	  -Wall -Wextra -Wno-unused-parameter -Wno-sign-compare \
-	  -I$(CORE_DIR) -I$(TARGET_DIR) -Isrc -DTARGET_HEADER='"$(TARGET_INCLUDE)"' \
+	  -I$(CORE_DIR) -I$(PAYLOAD_DIR) -I$(TARGET_DIR) -Isrc \
+	  $(TARGET_HEADER_DEFINES) \
 	  $(APP_PRELOAD_SRCS) -shared -pthread \
 	  -Wl,--gc-sections -Wl,--icf=all -s -o $@
 	@test $$(stat -c %s $@) -le $(APP_RELEASE_SIZE)

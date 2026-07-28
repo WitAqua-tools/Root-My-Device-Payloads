@@ -103,9 +103,13 @@ jobs:
         env:
           TARGET: ${{ matrix.target.target }}
           PAYLOAD: ${{ matrix.target.payload }}
+          # Which exploit core this target's kernel needs. It comes from
+          # src/targets.json like everything else about a target, so adding a
+          # target on a new GKI branch needs no workflow change.
+          CORE: ${{ matrix.target.core }}
         run: |
-          make TARGET="$TARGET" PAYLOAD="$PAYLOAD"
-          make TARGET="$TARGET" PAYLOAD="$PAYLOAD" release
+          make TARGET="$TARGET" PAYLOAD="$PAYLOAD" CORE="$CORE"
+          make TARGET="$TARGET" PAYLOAD="$PAYLOAD" CORE="$CORE" release
           echo "OUTDIR=build/${TARGET//\//_}" >> "$GITHUB_ENV"
           echo "SLUG=$(echo "$PAYLOAD" | tr 'A-Z' 'a-z')" >> "$GITHUB_ENV"
 

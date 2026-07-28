@@ -41,9 +41,9 @@ FEED_FIELDS = [
 
 # Present in src/targets.json for the repository's own organisation and for the
 # README table. They are not part of feed schema 2, so the app never sees them.
-SOURCE_ONLY_FIELDS = ["payload", "region", "marketingName", "soc", "status"]
+SOURCE_ONLY_FIELDS = ["payload", "core", "region", "marketingName", "soc", "status"]
 
-REQUIRED_FIELDS = FEED_FIELDS + ["payload", "region"]
+REQUIRED_FIELDS = FEED_FIELDS + ["payload", "core", "region"]
 
 FIELD_TYPES = {"sdk": int, "pageSize": int}
 
@@ -74,6 +74,11 @@ def target_path(targets_dir: Path, target: dict) -> Path:
 def target_key(target: dict) -> str:
     """The TARGET= value the Makefile takes, and the target's identity."""
     return f"{target['device']}/{target['region'].lower()}/{target['kernelRelease']}"
+
+
+def target_header_name(target: dict) -> str:
+    """The header the Makefile reads for this target, which follows its core."""
+    return f"target-{target['core']}.h"
 
 
 def exploit_asset_name(target: dict) -> str:
@@ -149,14 +154,31 @@ def load_sources(root: Path, problems: Problems) -> list[dict]:
                     f"got {type(target[field]).__name__}"
                 )
 
+        payload_dir = payloads_dir / target["payload"]
+        if not payload_dir.is_dir():
+            problems.add(f"{label}: payload {target['payload']!r} has no src/payloads directory")
+            continue
+        # A core is a whole exploit tree pinned to a GKI branch, not a set of
+        # offsets, and the glue that fills its root seam is named after it. Both
+        # are checked here so naming a core that does not exist fails in
+        # seconds rather than inside a compile of the payload.
+        core_dir = payload_dir / target["core"]
+        root_glue = payload_dir / f"root-{target['core']}.c"
+        for path in (core_dir, root_glue):
+            if not path.exists():
+                problems.add(f"{label}: core {target['core']!r} has no {path}")
+        if not core_dir.is_dir() or not root_glue.is_file():
+            continue
+
         directory = target_path(targets_dir, target)
         if not directory.is_dir():
             problems.add(f"{label}: {directory} is missing")
             continue
-        # Which header the build reads is the Makefile's business
-        # (TARGET_HEADER_NAME), so require a header rather than a fixed name.
-        if not any(directory.glob("*.h")):
-            problems.add(f"{label}: {directory} has no target header")
+        # A core reads offsets the other has never heard of, so which header
+        # the build reads follows the core rather than being any header here.
+        header = directory / target_header_name(target)
+        if not header.is_file():
+            problems.add(f"{label}: {header} is missing")
             continue
 
         kernelsu_path = directory / "kernelsu.json"
@@ -166,9 +188,6 @@ def load_sources(root: Path, problems: Problems) -> list[dict]:
         target["_kernelsu"] = json.loads(kernelsu_path.read_text(encoding="utf-8"))
         target["_dir"] = directory
         check_patch_sets(root, label, target["_kernelsu"], problems)
-
-        if not (payloads_dir / target["payload"]).is_dir():
-            problems.add(f"{label}: payload {target['payload']!r} has no src/payloads directory")
 
         # The app matches kernelRelease and kernelBuildVersion separately but
         # both are read off the same /proc/version line. If either is not
@@ -276,6 +295,7 @@ def main() -> int:
                     "profileId": t["profileId"],
                     "target": target_key(t),
                     "payload": t["payload"],
+                    "core": t["core"],
                     "asset": exploit_asset_name(t),
                 }
                 for t in targets
