@@ -10,8 +10,7 @@
  *   make TARGET=warhol/jp/6.12.38-android16-5-g1d46253471dd-ab15048002-4k
  *
  * This is a 6.12 kernel, so it is built against core612 rather than the 6.6
- * core66 the other targets use. The two cores share no source; see
- * docs/WARHOL-OS3.0.304.0.WPSJPXM.md.
+ * core66 the other targets use. The two cores share no source.
  *
  * The block below between the "generated" markers is the generate_target.py
  * output of the upstream port, copied unchanged. Everything in it was

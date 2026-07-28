@@ -160,7 +160,7 @@
  * relies on buffer->count already holding the ashmem name prefix
  * (ASHMEM_PREFIX_COUNT), which is configfs_read_iter's contract;
  * configfs_write_once() sets bin_buffer/bin_buffer_size/cb_max_size, which is
- * configfs_bin_write_iter's. docs/PORTING.md names configfs_read_iter for this
+ * configfs_bin_write_iter's. The port notes name configfs_read_iter for this
  * define, and the Samsung profiles follow it.
  *
  * This carried 0x0049fc10 — configfs_bin_read_iter — until it was checked
@@ -178,13 +178,13 @@
  * copies from bin_buffer/bin_buffer_size, which the read blob leaves zero, so it
  * would return 0 bytes. configfs_read_iter reaches the same to_frag chain only
  * inside the needs_read_fill branch, which the blob sets to 0 and skips.
- * See docs/PMG110-16.0.9.400.md. */
+ * See this profile's port notes. */
 #define CONFIGFS_READ_ITER_OFF 0x0049f8ecULL
 #define CONFIGFS_BIN_WRITE_ITER_OFF 0x0049fe18ULL
 /* Confirmed on hardware: with this value the payload reaches `cfi read ret=35`
  * and roots the device first attempt, where 0x0049fc10 panicked. The switch
  * below is kept because `pmg110-root` and `ghostlock-oneplus` root this device
- * with 0x0049fc10 and nothing explains how — see docs/PMG110-16.0.9.400.md:
+ * with 0x0049fc10 and nothing explains how — see this profile's port notes:
  *     adb shell CONFIGFS_READ_ITER_OFF=0x0049fc10 LD_PRELOAD=... /system/bin/true
  * Gated per target so the Samsung profiles still build byte-identically. */
 #define CONFIGFS_READ_ITER_ENV_OVERRIDE 1
