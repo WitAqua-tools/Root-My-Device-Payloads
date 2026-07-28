@@ -4,16 +4,13 @@
 #include <fcntl.h>
 #include <dlfcn.h>
 #include <poll.h>
-#include <sched.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
-#include <sys/mount.h>
 #include <sys/prctl.h>
-#include <sys/syscall.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/system_properties.h>
@@ -23,12 +20,10 @@
 #include <termios.h>
 #include <unistd.h>
 
-#define BOOTSTRAP_SOCK_PATH "/data/local/tmp/temp_su.sock"
-#define HOLD_READY_SOCKET "cve43499_roothold"
-#define SH_PATH "/system/bin/sh"
-#define KSUD_PATH "/data/local/tmp/ksud"
-#define LOGCAT_PATH "/system/bin/logcat"
+#include "su_daemon.h"
 
+/* Overwritten by --umh with the uid the payload was launched as, before the
+ * daemon starts serving. 2000 is adb shell, the uid a hand-run daemon serves. */
 static uid_t allowed_client_uid = 2000;
 
 #define SU_PROTOCOL_MAGIC 0x53553235U
@@ -38,42 +33,12 @@ static uid_t allowed_client_uid = 2000;
 #define SU_MAX_ENVC 512U
 #define SU_MAX_STRING 65536U
 #define SU_MAX_REQUEST_BYTES (1024U * 1024U)
-#define SU_PASSED_FDS 5U
-#define HOLD_REF_FDS 3U
 
 extern char **environ;
-
-struct su_tty_state {
-  uint8_t has_termios;
-  uint8_t has_winsize;
-  struct termios termios;
-  struct winsize winsize;
-};
-
-struct su_request_header {
-  uint32_t magic;
-  uint32_t version;
-  uint32_t argc;
-  uint32_t envc;
-  uint8_t interactive;
-  uint8_t reserved[3];
-  struct su_tty_state tty;
-};
 
 struct su_response {
   uint32_t magic;
   int32_t status;
-};
-
-struct su_request {
-  struct su_request_header header;
-  char **argv;
-  char **envp;
-  int stdin_fd;
-  int stdout_fd;
-  int stderr_fd;
-  int cwd_fd;
-  int io_fd;
 };
 
 static int saved_terminal_fd = -1;
@@ -102,7 +67,7 @@ static void set_root_env(void) {
   }
 }
 
-static int write_full(int fd, const void *buf, size_t len) {
+int write_full(int fd, const void *buf, size_t len) {
   const char *p = buf;
 
   while (len) {
@@ -264,7 +229,7 @@ fail:
   return NULL;
 }
 
-static void close_request_fds(struct su_request *request) {
+void close_request_fds(struct su_request *request) {
   int *fds[] = {&request->stdin_fd, &request->stdout_fd, &request->stderr_fd,
                 &request->cwd_fd, &request->io_fd};
   for (size_t i = 0; i < SU_PASSED_FDS; i++) {
@@ -328,7 +293,7 @@ static int recv_request(int conn, struct su_request *request) {
   return request->envp != NULL;
 }
 
-static int wait_status(pid_t pid) {
+int wait_status(pid_t pid) {
   int status;
   while (waitpid(pid, &status, 0) < 0) {
     if (errno != EINTR) {
@@ -342,153 +307,6 @@ static int wait_status(pid_t pid) {
     return 128 + WTERMSIG(status);
   }
   return 1;
-}
-
-static int recv_hold_fds(int socket_fd, int fds[HOLD_REF_FDS]) {
-  char marker = 0;
-  struct iovec iov = {
-      .iov_base = &marker,
-      .iov_len = sizeof(marker),
-  };
-  char control[CMSG_SPACE(sizeof(int) * HOLD_REF_FDS)];
-  struct msghdr msg;
-  memset(&msg, 0, sizeof(msg));
-  memset(control, 0, sizeof(control));
-  msg.msg_iov = &iov;
-  msg.msg_iovlen = 1;
-  msg.msg_control = control;
-  msg.msg_controllen = sizeof(control);
-
-  if (recvmsg(socket_fd, &msg, MSG_CMSG_CLOEXEC) != (ssize_t)sizeof(marker) ||
-      marker != 'P') {
-    return 0;
-  }
-  struct cmsghdr *cmsg = CMSG_FIRSTHDR(&msg);
-  if (!cmsg || cmsg->cmsg_level != SOL_SOCKET || cmsg->cmsg_type != SCM_RIGHTS ||
-      cmsg->cmsg_len != CMSG_LEN(sizeof(int) * HOLD_REF_FDS)) {
-    return 0;
-  }
-  memcpy(fds, CMSG_DATA(cmsg), sizeof(int) * HOLD_REF_FDS);
-  return 1;
-}
-
-static void hold_kernel_references(int conn) {
-  int fds[HOLD_REF_FDS] = {-1, -1, -1};
-  if (!recv_hold_fds(conn, fds)) {
-    return;
-  }
-  int ready_fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
-  if (ready_fd < 0) {
-    return;
-  }
-  struct sockaddr_un ready_address;
-  memset(&ready_address, 0, sizeof(ready_address));
-  ready_address.sun_family = AF_UNIX;
-  memcpy(ready_address.sun_path + 1, HOLD_READY_SOCKET,
-         sizeof(HOLD_READY_SOCKET) - 1);
-  socklen_t ready_length = (socklen_t)(
-      offsetof(struct sockaddr_un, sun_path) + sizeof(HOLD_READY_SOCKET));
-  if (bind(ready_fd, (struct sockaddr *)&ready_address, ready_length) != 0 ||
-      listen(ready_fd, 4) != 0) {
-    close(ready_fd);
-    return;
-  }
-  char acknowledged = 'K';
-  if (!write_full(conn, &acknowledged, sizeof(acknowledged))) {
-    return;
-  }
-  prctl(PR_SET_NAME, "cve43499-roothold", 0, 0, 0);
-  close(conn);
-  for (;;) {
-    int probe_fd = accept4(ready_fd, NULL, NULL, SOCK_CLOEXEC);
-    if (probe_fd >= 0) {
-      close(probe_fd);
-    }
-  }
-}
-
-struct ksu_get_info_cmd {
-  uint32_t version;
-  uint32_t flags;
-  uint32_t features;
-  uint32_t uapi_version;
-};
-
-static int verify_kernelsu_control(void) {
-  int fd = -1;
-  syscall(SYS_reboot, 0xDEADBEEF, 0xCAFEBABE, 0, &fd);
-  if (fd < 0) {
-    dprintf(STDERR_FILENO, "late-load: KernelSU driver fd unavailable\n");
-    return 13;
-  }
-
-  struct ksu_get_info_cmd info;
-  memset(&info, 0, sizeof(info));
-  int ret = ioctl(fd, _IOR('K', 2, struct ksu_get_info_cmd), &info);
-  int saved_errno = errno;
-  close(fd);
-  if (ret != 0 || info.version == 0 || (info.flags & 1U) == 0 ||
-      (info.flags & 4U) == 0) {
-    dprintf(STDERR_FILENO,
-            "late-load: KernelSU control check failed ret=%d errno=%d "
-            "version=%u flags=0x%x\n",
-            ret, saved_errno, info.version, info.flags);
-    return 14;
-  }
-
-  dprintf(STDOUT_FILENO,
-          "KernelSU control verified version=%u flags=0x%x "
-          "uapi=%u features=0x%x\n",
-          info.version, info.flags, info.uapi_version, info.features);
-  return 0;
-}
-
-static int run_s25u_late_load(struct su_request *request, int conn) {
-  pid_t pid = fork();
-  if (pid < 0) {
-    return 1;
-  }
-  if (pid == 0) {
-    if (dup2(request->stdin_fd, STDIN_FILENO) < 0 ||
-        dup2(request->stdout_fd, STDOUT_FILENO) < 0 ||
-        dup2(request->stderr_fd, STDERR_FILENO) < 0 ||
-        fchdir(request->cwd_fd) != 0) {
-      _exit(126);
-    }
-    close(conn);
-    close_request_fds(request);
-
-    if (unshare(CLONE_NEWNS) != 0 ||
-        mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL) != 0) {
-      dprintf(STDERR_FILENO, "late-load: private mount namespace: %s\n",
-              strerror(errno));
-      _exit(10);
-    }
-    if (mount(KSUD_PATH, LOGCAT_PATH, NULL, MS_BIND, NULL) != 0) {
-      dprintf(STDERR_FILENO, "late-load: bind mount: %s\n", strerror(errno));
-      _exit(11);
-    }
-
-    pid_t loader = fork();
-    if (loader < 0) {
-      dprintf(STDERR_FILENO, "late-load: fork: %s\n", strerror(errno));
-      _exit(12);
-    }
-    if (loader == 0) {
-      execl(LOGCAT_PATH, "logcat", "late-load", "--kmi", "android15-6.6",
-            "--package-name", "me.weishu.kernelsu", (char *)NULL);
-      dprintf(STDERR_FILENO, "late-load: exec: %s\n", strerror(errno));
-      _exit(12);
-    }
-
-    int loader_status = wait_status(loader);
-    if (loader_status != 0) {
-      _exit(loader_status);
-    }
-    _exit(verify_kernelsu_control());
-  }
-  close_request_fds(request);
-  return wait_status(pid);
 }
 
 static void send_response(int conn, int status) {
@@ -822,7 +640,7 @@ static void serve_one(int conn) {
     if (!read_full(conn, &operation, sizeof(operation))) {
       return;
     }
-    hold_kernel_references(conn);
+    su_hold_kernel_references(conn);
     return;
   }
 
@@ -833,10 +651,13 @@ static void serve_one(int conn) {
     return;
   }
 
-  int is_s25u_late_load = request.header.argc == 2 &&
-                           strcmp(request.argv[1], "--late-load") == 0;
-  int status = is_s25u_late_load
-                   ? run_s25u_late_load(&request, conn)
+  /* Dispatched on the verb alone, so a --late-load with the wrong number of
+   * arguments is answered by the code that knows what they should be rather
+   * than falling through to `sh --late-load`. */
+  int is_late_load = request.header.argc >= 2 &&
+                     strcmp(request.argv[1], "--late-load") == 0;
+  int status = is_late_load
+                   ? su_run_late_load(&request, conn)
                    : request.header.interactive
                          ? run_interactive(&request, conn)
                          : run_direct(&request, conn);

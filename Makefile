@@ -14,6 +14,16 @@ PAYLOAD_DIR := src/payloads/$(PAYLOAD)
 CORE_DIR := $(PAYLOAD_DIR)/core66
 HELPER_DIR := src/payloads/su_daemon
 
+# The bootstrap helper depends on no target -- one binary serves every one of
+# them and the application ships that one copy in its APK. The two things that
+# did know better than that are separated out: late_load.c is all it knows
+# about KernelSU, and hold_refs.c is the kernel-page reference holder that
+# exists for the exploit's sake alone.
+HELPER_SRCS := \
+  $(HELPER_DIR)/su_daemon.c \
+  $(HELPER_DIR)/late_load.c \
+  $(HELPER_DIR)/hold_refs.c
+
 # '/' is legal in TARGET but not in a directory name that has to stay flat.
 OUTDIR ?= build/$(subst /,_,$(TARGET))
 
@@ -81,8 +91,9 @@ $(PRELOAD): $(PRELOAD_SRCS) $(PAYLOAD_DEPS) | $(OUTDIR)
 	$(TARGET_CC) -fPIC $(COMMON_CFLAGS) $(PRELOAD_SRCS) \
 	  -shared -pthread -o $@
 
-$(ROOT_HELPER): $(HELPER_DIR)/su_daemon.c | $(OUTDIR)
-	$(TARGET_CC) -fPIE -pie -O2 -g0 -Wall -Wextra $< -ldl -o $@
+$(ROOT_HELPER): $(HELPER_SRCS) $(HELPER_DIR)/su_daemon.h | $(OUTDIR)
+	$(TARGET_CC) -fPIE -pie -O2 -g0 -Wall -Wextra -I$(HELPER_DIR) \
+	  $(HELPER_SRCS) -ldl -o $@
 
 $(APP_PRELOAD): $(APP_PRELOAD_SRCS) $(PAYLOAD_DEPS) | $(OUTDIR)
 	$(TARGET_CC) -DAPP_PAYLOAD=1 -fPIC $(COMMON_CFLAGS) $(APP_PRELOAD_SRCS) \

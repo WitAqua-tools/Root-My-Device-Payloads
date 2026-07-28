@@ -10,7 +10,7 @@ This repository contains the device-specific native side of
 - exact firmware profiles and offsets;
 - the exploit payload sources;
 - the app bootstrap helper source;
-- the KernelSU late-load build definitions and the source patch;
+- the KernelSU late-load build definitions, and which patch sets each takes;
 - the generator for the support feed the application reads.
 
 It intentionally does not contain Android application source code, and it
@@ -56,6 +56,10 @@ src/payloads/<payload>/               one directory per exploit
                         root.c        this repository's usermodehelper route
                         preload.c
 src/payloads/su_daemon/               the bootstrap helper the app ships in its APK
+                        su_daemon.c   the su daemon: protocol, uid check, exec
+                        late_load.c   all it knows about KernelSU
+                        hold_refs.c   the kernel-page reference holder
+                        su_daemon.h   the seam between those three
 src/kernelsu/                         KernelSU submodule, patch submodule and audit tools
 ```
 
@@ -113,6 +117,17 @@ cve-2026-43499-root
 
 `TARGET_HEADER_NAME` selects which header in the target directory the build
 reads; it defaults to `target-core66.h`, the one `core66` expects.
+
+`cve-2026-43499-root` does not depend on the target, so every target's build of
+it is the same binary. That is a constraint, not just an observation: one copy
+serves every target and the application ships that one copy in its APK, so
+nothing in it may be compiled for a particular device. The two things that were
+are separated out, `late_load.c` and `hold_refs.c`, and what they used to
+hard-code now arrives at run time — the KMI and manager package as arguments,
+the reference holder only when the payload asks for it.
+
+The application ships its own copy rather than fetching it, so a change under
+`src/payloads/su_daemon/` has to be carried over there as well.
 
 `release` is the one the feed publishes: it is size-checked and then padded to
 the fixed `APP_RELEASE_SIZE` the app expects. `cve-2026-43499-root` is the
