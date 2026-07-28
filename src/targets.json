@@ -65,7 +65,7 @@
       "sdk": 36,
       "abi": "arm64-v8a",
       "pageSize": 4096,
-      "status": "the LD_PRELOAD build roots this device on the first attempt, and kernelRelease / kernelVersion / kernelBuildVersion / buildFingerprint / buildDisplay are captured from it -- `getprop ro.build.display.id` returns the fingerprint's ID field, not the incremental this entry first guessed; sdk / abi / pageSize are matched fields that were reasoned from the image rather than read, and the app payload has not run here"
+      "status": "the LD_PRELOAD build roots this device on the first attempt, and every matched field here -- kernelRelease, kernelVersion, kernelBuildVersion, buildFingerprint, buildDisplay, sdk, abi, pageSize -- is read off the device rather than reasoned from the image; `getprop ro.build.display.id` returns the fingerprint's ID field, not the incremental this entry first guessed. The app payload roots it too as of the kernel-read fallback for the SELinux enforcing flag -- verified at the application's uid (10341) in a domain that cannot read /sys/fs/selinux/enforce, done=1 root=1 on the first attempt -- but the application itself has still not completed a run, because it refetches its payload from the published release on every install and no release carries this build yet"
     }
   ]
 }
