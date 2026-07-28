@@ -50,11 +50,18 @@ core with different offsets — and each target names the one it needs in
 Neither core is this repository's own work and neither is edited to resemble
 the other, so a fix can be taken from upstream and no kernel's constants can
 leak into another kernel's tree. What is this repository's own is the glue
-around them — `root-<core>.c`, `preload.c` and `payload.h`, described under
-[Layout](#layout).
+around them — `root-<core>.c`, `mte.c`, `preload.c` and `payload.h`, described
+under [Layout](#layout).
 
-`core612` is byte-identical to warhol-root. `core66` carries two deltas against
-pmg110-root, and only these two:
+`core612` carries one delta against warhol-root, and only this one:
+
+- `util.c` includes `payload.h` and asks `payload_mte_tagged()` whether this
+  boot's kernel tags heap pointers, where upstream passes a hard-coded
+  `mte_enabled = 1` to `kernelsnitch_setup()`. Two hunks: that include and that
+  call. See [Kernel MTE](#kernel-mte) for why it cannot be a constant on
+  warhol.
+
+`core66` carries two deltas against pmg110-root, and only these two:
 
 - `offset.h` names the target header through `TARGET_HEADER` rather than
   upstream's `TARGET_CONFIG_H`. The Makefile now defines both macros to the
@@ -89,6 +96,39 @@ display ID, SDK, ABI, and page size remain part of automatic target selection.
 The port is based on the exploit source published at
 <https://github.com/NebuSec/CyberMeowfia/tree/main/IonStack/CVE-2026-43499/exploit>.
 
+## Kernel MTE
+
+With `KASAN_HW_TAGS` active, every slab pointer carries an allocation tag in
+bits [59:56]. The `mm_struct` leak hashes the whole pointer the way
+`futex_hash()` does, so it has to sweep the same shape the kernel produced: an
+untagged sweep on a tagged kernel matches nothing and the leak fails with no
+other symptom. Sweeping all 16 tags is the safe answer either way — tag `0xf`
+*is* the untagged pointer — but on a kernel that tags nothing it costs 16x the
+candidates and 16x the false-positive exposure.
+
+On warhol that is not a property of the firmware. The device boots the same
+images under an engineering preloader, which enables MTE, or a retail one,
+which does not, so `src/targets/warhol/.../target-core612.h` deliberately does
+not answer and `mte.c` answers per boot instead:
+
+| | |
+|---|---|
+| `GHOSTLOCK_MTE=0` / `=1` | forces it, for a device that disagrees or to reproduce the other case |
+| `KS_MTE_TAGGED` in the target header | pins it where a target does know — pmg110's does, from a measurement on that device |
+| `AT_HWCAP2 & HWCAP2_MTE` | otherwise |
+
+The last one is not a guess. `HWCAP2_MTE` comes from the `ARM64_MTE` cpu
+capability and `kasan_init_hw_tags()` returns early on
+`!system_supports_mte()`, which is that same capability — `arm64.nomte` clears
+both together — so a kernel that does not report MTE to userspace cannot be
+tagging slab pointers. The converse is weaker: MTE reported with `kasan=off` on
+the command line leaves pointers untagged and this still answers "tagged",
+which costs the 16x sweep and still finds the object. Every uncertain case
+resolves that way on purpose.
+
+Only `core612` reads it. `core66`'s own knob predates this and stays as
+imported, and its one target pins the answer.
+
 ## Layout
 
 ```text
@@ -104,8 +144,9 @@ src/payloads/<payload>/               one directory per exploit
                      core612/         the 6.12 core, from warhol-root
                      root-core66.c    usermodehelper route to a resident root
                      root-core612.c   direct-exec route to the same
+                     mte.c            whether this boot's kernel tags heap pointers
                      preload.c        the retry supervisor, shared by both
-                     payload.h        what those three agree on
+                     payload.h        what those four agree on
 src/payloads/su_daemon/               the bootstrap helper the app ships in its APK
                      su_daemon.c      the su daemon: protocol, uid check, exec
                      late_load.c      all it knows about KernelSU

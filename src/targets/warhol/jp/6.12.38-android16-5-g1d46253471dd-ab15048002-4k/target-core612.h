@@ -83,6 +83,19 @@
 
 /* --- end generated ------------------------------------------------------- */
 
+/* Kernel heap pointers carry an allocation tag in bits [59:56] when
+ * KASAN_HW_TAGS is active, and the mm_struct leak hashes the whole pointer, so
+ * the sweep has to know which of the two shapes it is looking for. This target
+ * deliberately does not say: warhol boots the same firmware under either an
+ * engineering preloader, which enables MTE, or a retail one, which does not,
+ * so the answer belongs to the boot and not to the images these offsets were
+ * generated from. Leaving KS_MTE_TAGGED undefined is what selects the run-time
+ * answer in mte.c -- AT_HWCAP2's MTE bit, the same ARM64_MTE capability
+ * kasan_init_hw_tags() gates on. GHOSTLOCK_MTE=0/1 forces it either way.
+ * The device this profile was derived from had MTE on, which is the case the
+ * exploit is verified in; a target whose answer is fixed and measured pins it
+ * here instead, the way pmg110's header does. */
+
 /* Where root-core612.c looks for the bootstrap helper when the payload was
  * not launched by the application. The app build overrides it: the helper it
  * ships inside its APK cannot be at a fixed path, so it passes the real one in

@@ -66,15 +66,19 @@ ROOT_HELPER := $(OUTDIR)/$(PAYLOAD_SLUG)-root
 
 # Both cores are imported trees; nothing under $(CORE_DIR) is this
 # repository's own work, and each is kept as close to the port it came from as
-# it can be. core612 is byte-identical to warhol-root. core66 carries two
-# deltas against pmg110-root, both listed in the README. What *is* this
-# repository's own is the root glue and the supervisor:
+# it can be. core612 carries one delta against warhol-root and core66 two
+# against pmg110-root, all listed in the README. What *is* this repository's
+# own is the root glue, the MTE answer and the supervisor:
 #
 #   root-<core>.c  how that core gets the bootstrap helper resident as root.
 #                  core66 queues a usermodehelper work item from an
 #                  unprivileged process (install_android_root); core612 is
 #                  already root and execs it (install_embedded_su). One is
 #                  linked per build.
+#   mte.c          whether this boot's kernel tags heap pointers. Core-neutral
+#                  and linked into every build; core612 is the one that reads
+#                  it, because warhol's answer follows the flashed preloader
+#                  rather than the firmware its target header came from.
 #   preload.c      the retry supervisor, shared by both.
 #
 # payload.h is the seam between them.
@@ -88,6 +92,7 @@ CORE_SRCS := \
 PRELOAD_SRCS := \
   $(CORE_SRCS) \
   $(PAYLOAD_DIR)/root-$(CORE).c \
+  $(PAYLOAD_DIR)/mte.c \
   $(PAYLOAD_DIR)/preload.c
 
 APP_PRELOAD_SRCS := $(PRELOAD_SRCS)
