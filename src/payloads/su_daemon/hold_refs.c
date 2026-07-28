@@ -14,7 +14,7 @@
  *
  * core66 reaches its physical read/write through a page it must keep the
  * kernel from reusing, and the exploit process cannot be the one holding it:
- * that process exits when the attempt ends. So root-core66.c hands the
+ * that process exits when the attempt ends. So core66/root.c hands the
  * descriptors to this daemon, which is already resident, and it simply never
  * closes them.
  *
@@ -31,7 +31,7 @@
  *   'K'                   the acknowledgement this sends back
  *   "cve43499_roothold"   the abstract socket the payload then polls to learn
  *                         that the holder is live (ROOT_HOLD_READY_SOCKET in
- *                         root-core66.c)
+ *                         core66/root.c)
  */
 
 #define HOLD_READY_SOCKET "cve43499_roothold"

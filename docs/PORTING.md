@@ -45,13 +45,16 @@ Importing a core, as `core612` was imported:
    an uncommitted local experiment copied in as though it were the port is a
    failure mode that has already happened once, and it is invisible afterwards.
 2. Copy only the exploit tree. The port's own `preload.c`, `su_daemon.c` and any
-   `.incbin` blob are its app glue; this repository has its own.
+   `.incbin` blob are its app glue; this repository has its own. The core
+   directory ends up holding exactly one file this repository wrote, `root.c`
+   below, so re-importing later is "replace everything here but `root.c`" --
+   check first that the port has not since grown a file by that name.
 3. Do not edit it to resemble the core already here — not the naming, and
    especially not the constants each spells differently. Where the two disagree
    about something the build has to reconcile, reconcile it in the Makefile.
    `TARGET_HEADER` versus `TARGET_CONFIG_H` is handled that way: both macros are
    defined to the same include so neither core is touched.
-4. Write `root-<core>.c`. That is this repository's own code, and it is where a
+4. Write `<core>/root.c`. That is this repository's own code, and it is where a
    core hands over: it fills whichever seam the core calls to get the bootstrap
    helper resident as root, and it answers `payload_default_attempts()`,
    `payload_attempt_timeout_sec()` and `payload_report_root()` from `payload.h`.

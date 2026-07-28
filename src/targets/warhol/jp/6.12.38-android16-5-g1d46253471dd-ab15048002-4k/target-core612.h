@@ -96,7 +96,7 @@
  * exploit is verified in; a target whose answer is fixed and measured pins it
  * here instead, the way pmg110's header does. */
 
-/* Where root-core612.c looks for the bootstrap helper when the payload was
+/* Where core612/root.c looks for the bootstrap helper when the payload was
  * not launched by the application. The app build overrides it: the helper it
  * ships inside its APK cannot be at a fixed path, so it passes the real one in
  * CVE43499_ROOT_HELPER. core66's targets spell the same path as ROOT_UMH_PATH,
@@ -107,7 +107,7 @@
  * exploit process's own cred, so a failed attempt does not leave the kernel in
  * the state the next one expects. It is verified one-shot on this device;
  * until a retry is verified as well, the supervisor gets a small budget rather
- * than core66's. See payload_default_attempts() in root-core612.c. */
+ * than core66's. See payload_default_attempts() in core612/root.c. */
 #define PAYLOAD_ATTEMPT_BUDGET 3
 
 /* The same reasoning applied to the supervisor's SIGKILL. core612 retries

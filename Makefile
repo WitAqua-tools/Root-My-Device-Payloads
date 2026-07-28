@@ -64,17 +64,26 @@ APP_RELEASE := $(OUTDIR)/$(PAYLOAD_SLUG)-app.release.so
 APP_RELEASE_SIZE := 104128
 ROOT_HELPER := $(OUTDIR)/$(PAYLOAD_SLUG)-root
 
-# Both cores are imported trees; nothing under $(CORE_DIR) is this
-# repository's own work, and each is kept as close to the port it came from as
-# it can be. core612 carries one delta against warhol-root and core66 two
-# against pmg110-root, all listed in the README. What *is* this repository's
-# own is the root glue, the MTE answer and the supervisor:
+# Both cores are imported trees kept as close to the port they came from as
+# they can be: core612 carries one delta against warhol-root and core66 two
+# against pmg110-root, all listed in the README. The one file under $(CORE_DIR)
+# that is *not* imported is root.c, which is this repository's own and is named
+# so that a core's code stays in that core's directory:
 #
-#   root-<core>.c  how that core gets the bootstrap helper resident as root.
+#   <core>/root.c  how that core gets the bootstrap helper resident as root.
 #                  core66 queues a usermodehelper work item from an
 #                  unprivileged process (install_android_root); core612 is
 #                  already root and execs it (install_embedded_su). One is
-#                  linked per build.
+#                  linked per build, and it is listed apart from CORE_SRCS
+#                  below so the build still says which side of the import each
+#                  file is on.
+#
+# Neither port has a file by that name -- their own app glue is preload.c,
+# su_daemon.c and an .incbin blob, none of which was copied -- so re-importing
+# a core is still "replace everything here but root.c".
+#
+# What is this repository's own and shared by both cores:
+#
 #   mte.c          whether this boot's kernel tags heap pointers. Core-neutral
 #                  and linked into every build; core612 is the one that reads
 #                  it, because warhol's answer follows the flashed preloader
@@ -91,7 +100,7 @@ CORE_SRCS := \
 
 PRELOAD_SRCS := \
   $(CORE_SRCS) \
-  $(PAYLOAD_DIR)/root-$(CORE).c \
+  $(CORE_DIR)/root.c \
   $(PAYLOAD_DIR)/mte.c \
   $(PAYLOAD_DIR)/preload.c
 

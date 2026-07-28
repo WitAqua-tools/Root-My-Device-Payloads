@@ -30,7 +30,7 @@
  * spelled here rather than wherever they happen to be used.
  *
  * BOOTSTRAP_SOCK_PATH is also spelled in the payload's root glue
- * (root-core66.c and root-core612.c, as ROOT_SOCKET_PATH): that is where the
+ * (core66/root.c and core612/root.c, as ROOT_SOCKET_PATH): that is where the
  * two sides meet, and the payload cannot include this header.
  */
 #define BOOTSTRAP_SOCK_PATH "/data/local/tmp/temp_su.sock"

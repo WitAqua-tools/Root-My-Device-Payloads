@@ -50,8 +50,15 @@ core with different offsets — and each target names the one it needs in
 Neither core is this repository's own work and neither is edited to resemble
 the other, so a fix can be taken from upstream and no kernel's constants can
 leak into another kernel's tree. What is this repository's own is the glue
-around them — `root-<core>.c`, `mte.c`, `preload.c` and `payload.h`, described
+around them — `<core>/root.c`, `mte.c`, `preload.c` and `payload.h`, described
 under [Layout](#layout).
+
+A core's own code stays in that core's directory, `root.c` included: it is the
+one file under `src/payloads/<payload>/<core>/` that this repository wrote
+rather than imported. Neither port has a file by that name — their app glue is
+`preload.c`, `su_daemon.c` and an `.incbin` blob, none of which was copied — so
+re-importing a core is still "replace everything there but `root.c`", and the
+build lists it apart from the imported sources for the same reason.
 
 `core612` carries one delta against warhol-root, and only this one:
 
@@ -82,7 +89,7 @@ else is a call that will fail at `dlopen` on the device rather than in the
 build.
 
 A new core is added by dropping the tree in as `src/payloads/<payload>/<core>/`,
-writing the `root-<core>.c` that fills its root seam, and naming it from a
+writing the `root.c` beside it that fills its root seam, and naming it from a
 target. Nothing in the Makefile or the workflow has to learn about it.
 
 Root My Device requires both the exact `uname -r` value in `kernelRelease` and
@@ -141,9 +148,10 @@ src/targets/<device>/<region>/<kernel release>/
                                       and the patch sets that build takes
 src/payloads/<payload>/               one directory per exploit
                      core66/          the 6.6 core, from pmg110-root
+                       root.c         usermodehelper route to a resident root,
+                                      and this repository's, not the port's
                      core612/         the 6.12 core, from warhol-root
-                     root-core66.c    usermodehelper route to a resident root
-                     root-core612.c   direct-exec route to the same
+                       root.c         direct-exec route to the same
                      mte.c            whether this boot's kernel tags heap pointers
                      preload.c        the retry supervisor, shared by both
                      payload.h        what those four agree on
@@ -224,7 +232,7 @@ cve-2026-43499-root
 
 `CORE` also decides which header the build reads and which root glue it links:
 `TARGET_HEADER_NAME` defaults to `target-$(CORE).h` and the glue is
-`root-$(CORE).c`. Set `TARGET_HEADER_NAME` explicitly only to read a header
+`$(CORE)/root.c`. Set `TARGET_HEADER_NAME` explicitly only to read a header
 that is not named after the core.
 
 `cve-2026-43499-root` does not depend on the target or the core, so every

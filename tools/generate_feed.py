@@ -159,11 +159,12 @@ def load_sources(root: Path, problems: Problems) -> list[dict]:
             problems.add(f"{label}: payload {target['payload']!r} has no src/payloads directory")
             continue
         # A core is a whole exploit tree pinned to a GKI branch, not a set of
-        # offsets, and the glue that fills its root seam is named after it. Both
-        # are checked here so naming a core that does not exist fails in
-        # seconds rather than inside a compile of the payload.
+        # offsets, and the glue that fills its root seam lives inside it as
+        # root.c -- the one file there this repository wrote. Both are checked
+        # here so naming a core that does not exist fails in seconds rather
+        # than inside a compile of the payload.
         core_dir = payload_dir / target["core"]
-        root_glue = payload_dir / f"root-{target['core']}.c"
+        root_glue = core_dir / "root.c"
         for path in (core_dir, root_glue):
             if not path.exists():
                 problems.add(f"{label}: core {target['core']!r} has no {path}")
