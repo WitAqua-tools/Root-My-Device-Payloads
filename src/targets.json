@@ -65,7 +65,7 @@
       "sdk": 36,
       "abi": "arm64-v8a",
       "pageSize": 4096,
-      "status": "the LD_PRELOAD build roots this device on the first attempt, and every matching field is captured from it -- kernelRelease / kernelVersion / kernelBuildVersion / buildFingerprint by adb, buildDisplay by `getprop ro.build.display.id`, which returns the fingerprint's ID field and not the incremental this entry first guessed; the app payload has not run here"
+      "status": "the LD_PRELOAD build roots this device on the first attempt, and kernelRelease / kernelVersion / kernelBuildVersion / buildFingerprint / buildDisplay are captured from it -- `getprop ro.build.display.id` returns the fingerprint's ID field, not the incremental this entry first guessed; sdk / abi / pageSize are matched fields that were reasoned from the image rather than read, and the app payload has not run here"
     }
   ]
 }
