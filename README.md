@@ -22,7 +22,7 @@ and published as a release asset — see [Feed delivery](#feed-delivery).
 | Target | Core | Device | SoC | Region | Firmware | Kernel | Fingerprint | Status |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `pmg110-cn-16.0.9.400` | `core66` | OPPO PMG110 / K15 Pro+ | MediaTek MT6991 | CN | `PMG110_16.0.9.400(CN01)` | `6.6.118-android15-8-g93e223c276e7-abogki500782043-4k` (`android15-6.6`, 4K pages) | `OPPO/PMG110/OP61E5L1:16/BP2A.250605.015/B.c24acd_188efc3_187038b:user/release-keys` | Exploit core device-verified through the non-app build; the feed entry ships, but the app payload has not completed a run here. |
-| `warhol-jp-OS3.0.304.0.WPSJPXM` | `core612` | Xiaomi 17T Pro | MediaTek MT6993 | JP | `OS3.0.304.0.WPSJPXM` | `6.12.38-android16-5-g1d46253471dd-ab15048002-4k` (`android16-6.12`, 4K pages) | `Xiaomi/warhol_jp/warhol:16/BP2A.250605.031.A3/OS3.0.304.0.WPSJPXM:user/release-keys` | Exploit core device-verified through the non-app build, first attempt; the app payload has not completed a run here, and `buildDisplay` is unconfirmed. |
+| `warhol-jp-OS3.0.304.0.WPSJPXM` | `core612` | Xiaomi 17T Pro | MediaTek MT6993 | JP | `OS3.0.304.0.WPSJPXM` | `6.12.38-android16-5-g1d46253471dd-ab15048002-4k` (`android16-6.12`, 4K pages) | `Xiaomi/warhol_jp/warhol:16/BP2A.250605.031.A3/OS3.0.304.0.WPSJPXM:user/release-keys` | Exploit core device-verified through the non-app build, first attempt; `buildDisplay` is `BP2A.250605.031.A3`, read from the device, not the firmware string in the Firmware column. The app payload has not completed a run here. |
 
 The Samsung profiles this repository began with were removed along with their
 payloads, artifacts, KernelSU builds and feed entries.

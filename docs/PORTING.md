@@ -148,7 +148,12 @@ how hard you have to work for each:
 - **Matched by the app** — `kernelRelease`, `kernelBuildVersion`, `buildDisplay`,
   `sdk`, `abi`, `pageSize`. A wrong value here means the device silently never
   matches. `buildDisplay` is `ro.build.display.id`, and it is easy to guess
-  wrong; read it off the device.
+  wrong; read it off the device. Vendors disagree about what to put there:
+  OPPO's PMG110 overrides it with its own firmware string
+  (`PMG110_16.0.9.400(CN01)`, against ID `BP2A.250605.015`), while Xiaomi's
+  warhol leaves it as the platform ID (`BP2A.250605.031.A3`) and shows the
+  firmware version through `ro.build.version.incremental` instead. Neither
+  half of the fingerprint predicts the other vendor's choice.
 - **Device-only** — `kernelVersion` and `kernelBuildVersion` are the kernel's own
   `linux_banner` and `UTS_VERSION`. `adb shell cat /proc/version` prints the
   first and contains the second. Both can be read out of the boot image instead,
