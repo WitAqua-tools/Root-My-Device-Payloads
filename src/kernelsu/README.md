@@ -3,7 +3,7 @@
 | Path | Contents |
 | --- | --- |
 | `KernelSU/` | upstream submodule, pinned to `v3.2.5` (`b0bc817b4e966aa6aa830834eaf6ef765d821d40`) |
-| `Root-My-Device-KSU/` | submodule holding the patches, applied to every build before any the target adds |
+| `Root-My-Device-KSU/` | submodule holding the patches, in sets a build selects between |
 | `tools/` | module auditing against a recovered target kernel |
 
 The patches are a derivative work of KernelSU and carry its GPL terms, not this
@@ -18,33 +18,51 @@ with in its own `kernelsu.json`, and CI produces `ksud-<id>` and
 `kernelsu-<id>.ko` from this submodule as release assets. The pair is always
 published together, because `ksud` embeds the module it loads.
 
-## Why the patch is applied to every build
+## Which patches a build gets
 
-[`Root-My-Device-KSU/patches/KernelSU-v3.2.5-samsung-kdp-rkp-defex.patch`](https://github.com/Witaqua-tools/Root-My-Device-KSU/blob/main/patches/KernelSU-v3.2.5-samsung-kdp-rkp-defex.patch)
-carries two independent halves.
+Each directory under `Root-My-Device-KSU/patches/` is one **patch set**, and a
+build's tree carries `common` plus whatever its `kernelsu.json` names in
+`patchSets`. Nothing else is applied to it, so a workaround for one vendor is
+not merely compiled out of another vendor's module — it is not in the tree that
+module was built from.
 
-The **`ksud` half is required by every target**, Samsung or not. Upstream
+| Set | Applied to | Holds |
+| --- | --- | --- |
+| `common/` | every build, always, first | what no target can boot without |
+| `galaxy/` | builds that name it | Samsung KDP / RKP / DEFEX |
+| `oppo/` | builds that name it | OPPO, OnePlus and realme — empty today |
+| `devices/<id>/` | the build of that id | what nothing else can use — empty today |
+
+**`common` is required by every target**, on any vendor's firmware. Upstream
 late-load could not write a new `/data/adb/ksud` after the module changed the
-loader's security context — the destination stayed a zero-byte file. The patch
+loader's security context — the destination stayed a zero-byte file. The set
 stages the daemon at `/data/local/tmp/.ksud-stage`, renames it onto the same
 `/data` filesystem before loading the module, and finishes labels and assets
 once the module is active. The bootstrap helper in
 [`src/payloads/su_daemon`](../payloads/su_daemon) drives exactly that sequence,
-so removing this patch breaks installation on any device.
+so a build without this set cannot install on any device. It also carries the
+include paths a module built out of a DDK image needs.
 
-The **kernel half is compiled out unless a target asks for it**, through the
-`config` array in its `kernelsu.json`. It exists because a generic build panics
-on Samsung firmware: an inline `put_cred()` writes directly to a KDP-protected
-credential refcount, RKP rejects the write to an unused syscall-table slot while
-the generic code still treats the dispatcher as installed, and DEFEX keeps its
-own task credential tuple that a KernelSU UID transition leaves unsynchronised.
-Under `CONFIG_KSU_SAMSUNG_{KDP,RKP,DEFEX}` the patch resolves
+**`galaxy` exists because a generic build panics on Samsung firmware**: an
+inline `put_cred()` writes directly to a KDP-protected credential refcount, RKP
+rejects the write to an unused syscall-table slot while the generic code still
+treats the dispatcher as installed, and DEFEX keeps its own task credential
+tuple that a KernelSU UID transition leaves unsynchronised. The set resolves
 `kdp_usecount_dec_and_test()` and `kdp_assign_pgd()` from the running kernel,
 installs credentials through `prepare_ro_creds()`, synchronises the DEFEX
 record, records a syscall-table hook only if the RKP-protected write succeeds,
-and otherwise falls back to kretprobe/kprobe sucompat.
+and otherwise falls back to kretprobe/kprobe sucompat. Each of the three sits
+behind its own `CONFIG_KSU_SAMSUNG_*` option, which the target passes in
+`config` alongside the set — the options gate code that only the set puts there,
+so either one without the other does nothing.
 
-No target in this repository currently sets those options.
+No target in this repository currently names a set: every build here is
+`common` alone.
+
+A name that resolves to nothing fails the build, and `tools/generate_feed.py`
+fails on it in seconds beforehand whenever the submodule is checked out. That is
+also why an empty `oppo/` costs nothing: no target can name it until it holds a
+patch.
 
 ## How a build is produced
 
@@ -53,8 +71,11 @@ reproducing one by hand.
 
 ```sh
 git submodule update --init --recursive src/kernelsu
-git -C src/kernelsu/KernelSU apply \
-  "$PWD/src/kernelsu/Root-My-Device-KSU/patches"/*.patch
+patches="$PWD/src/kernelsu/Root-My-Device-KSU/patches"
+# common first, then each set in patchSets, in the order it lists them
+for set in common <patchSets>; do
+  git -C src/kernelsu/KernelSU apply "$patches/$set"/*.patch
+done
 ```
 
 Build the module inside the KMI's DDK image, overwriting the image's own

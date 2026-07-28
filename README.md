@@ -49,8 +49,8 @@ src/targets.json                      every target, and the only hand-authored f
 src/targets/<device>/<region>/<kernel release>/
                         target.h      offsets recovered from that exact firmware
                         p0_fingerprint.h
-                        kernelsu.json the KernelSU build this target pairs with
-                        kernelsu/     optional extra patches for this target
+                        kernelsu.json the KernelSU build this target pairs with,
+                                      and the patch sets that build takes
 src/payloads/<payload>/               one directory per exploit
                         core66/       the exploit core, from pmg110-root
                         root.c        this repository's usermodehelper route
@@ -128,8 +128,11 @@ git clone --recurse-submodules <this repository>
 The late-load artifacts are rebuilt from that submodule plus the patches in
 [Root-My-Device-KSU](https://github.com/Witaqua-tools/Root-My-Device-KSU),
 itself a submodule. Those patches are a derivative work of KernelSU and carry
-its GPL terms rather than this repository's Apache-2.0 ones, which is why they
-are not stored here. The build procedure and the per-target audit steps are in
+its GPL terms rather than this repository's Apache-2.0 ones, which is why none
+of them are stored here — down to the ones that would only ever serve one
+device. They come in sets: one every build takes, and vendor or single-build
+sets a target names in its `kernelsu.json`, so a build compiles only what it is
+the reason for. The build procedure and the per-target audit steps are in
 [`src/kernelsu/README.md`](src/kernelsu/README.md).
 
 The firmware-to-target procedure is recorded in
