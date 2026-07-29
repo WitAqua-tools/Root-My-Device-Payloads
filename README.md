@@ -23,7 +23,7 @@ and published as a release asset — see [Feed delivery](#feed-delivery).
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `pmg110-cn-16.0.9.400` | `core66` | OPPO PMG110 / K15 Pro+ | MediaTek MT6991 | CN | `PMG110_16.0.9.400(CN01)` | `6.6.118-android15-8-g93e223c276e7-abogki500782043-4k` (`android15-6.6`, 4K pages) | `OPPO/PMG110/OP61E5L1:16/BP2A.250605.015/B.c24acd_188efc3_187038b:user/release-keys` | Exploit core device-verified through the non-app build; the feed entry ships, but the app payload has not completed a run here. |
 | `warhol-jp-OS3.0.304.0.WPSJPXM` | `core612` | Xiaomi 17T Pro | MediaTek MT6993 | JP | `OS3.0.304.0.WPSJPXM` | `6.12.38-android16-5-g1d46253471dd-ab15048002-4k` (`android16-6.12`, 4K pages) | `Xiaomi/warhol_jp/warhol:16/BP2A.250605.031.A3/OS3.0.304.0.WPSJPXM:user/release-keys` | Working from the app, KernelSU `32525-2`. |
-| `xig07-jp-OS3.0.7.0.WNEJPKD` | `core61` | Xiaomi 14T (au XIG07) | MediaTek MT6897 | JP | `OS3.0.7.0.WNEJPKD` | `6.1.138-android14-11-g44bda9e8f6e9-ab13792638` (`android14-6.1`, 4K pages) | `Xiaomi/XIG07_jp_kdi/XIG07:16/BP2A.250605.031.A3/OS3.0.7.0.WNEJPKD:user/release-keys` | In bring-up. The offsets, the KASLR leak, the MTE answer and the fake waiter's placement are all device-confirmed; what has not landed yet is the reclaim, so no run has reached root. `kernelVersion` is null while that is true, which keeps the target out of the feed. |
+| `xig07-jp-OS3.0.7.0.WNEJPKD` | `core61` | Xiaomi 14T (au XIG07) | MediaTek MT6897 | JP | `OS3.0.7.0.WNEJPKD` | `6.1.138-android14-11-g44bda9e8f6e9-ab13792638` (`android14-6.1`, 4K pages) | `Xiaomi/XIG07_jp_kdi/XIG07:16/BP2A.250605.031.A3/OS3.0.7.0.WNEJPKD:user/release-keys` | In bring-up. The offsets, the KASLR leak, the MTE answer, the fake waiter's placement and now the cross-cache reclaim are all device-confirmed: the chain reaches arbitrary kernel R/W on the first attempt, repeatably. What has not landed is the stage after it, the pipe physical R/W, which this kernel makes mandatory -- `CONFIG_HARDENED_USERCOPY` rules the configfs fallback out. No run has reached root, so `kernelVersion` is null and the target stays out of the feed. |
 
 The Samsung profiles this repository began with were removed along with their
 payloads, artifacts, KernelSU builds and feed entries.
@@ -62,7 +62,7 @@ rather than imported. Neither port has a file by that name — their app glue is
 re-importing a core is still "replace everything there but `root.c`", and the
 build lists it apart from the imported sources for the same reason.
 
-`core61` carries eight deltas against the tree it was taken from, all of them
+`core61` carries nine deltas against the tree it was taken from, all of them
 things that tree had never had to answer because every target it shipped was a
 Samsung one. Each is gated on a macro whose default is what upstream did, so a
 target that says nothing gets upstream's behaviour unchanged:
@@ -106,14 +106,24 @@ target that says nothing gets upstream's behaviour unchanged:
   workqueue or worker-pool pointer in the umh route — carries its object's MTE
   tag, so the raw value sits below `DIRECT_MAP_BASE` and the untagged test
   rejected a valid pointer. Identity where MTE is off.
+- `pipe.c` untags at every linear-map/`struct page` conversion, and
+  `kernel_read_data()`/`kernel_write_data()` untag the address they are given.
+  The pfn arithmetic subtracts a base, so a tag in the top byte does not cancel
+  — it lands in the pfn, is multiplied by `STRUCT_PAGE_SIZE`, and the primitive
+  hands the kernel an address in neither range. Doing it in the primitive means
+  every caller addresses kernel memory through the `0xff`-topped match-all
+  alias rather than each one remembering. Identity where MTE is off.
 - `root.c` can drive the usermodehelper install through the ashmem-fops R/W the
   CFI stage already proved, instead of the pipe-buffer primitive and its cache
   gate (`CVE43499_CONFIGFS_ROOT`). It addresses every kernel pointer it reads or
   writes through the `0xF` match-all alias, and it moves the reclaimed page's
   umh work item onto that alias too, for the same synchronous-MTE reason the
-  fake-pointer base is canonicalised. This is the route around the pipe cache
-  gate, which has not been made to pass on this target; it reaches the install
-  but a full run through it has not completed here.
+  fake-pointer base is canonicalised. **On a `CONFIG_HARDENED_USERCOPY` kernel
+  it is a diagnostic knob, not a fallback**: the configfs copy runs
+  `check_object_size()`, `kmalloc-*` objects are whitelisted whole but a
+  dedicated cache is not, and the install has to read `pool_workqueue` — which
+  has its own cache. On XIG07 that is a `kernel BUG at mm/usercopy.c`, so the
+  pipe route is mandatory there.
 - `util.c`'s `prepare_kernel_page` takes its reclaim ordering from the working
   MT6897 6.1.138 reference rather than upstream's: it frees the target mm and
   sprays the sk_buff with nothing in between, where upstream drains a second
@@ -121,9 +131,12 @@ target that says nothing gets upstream's behaviour unchanged:
   intervening allocator churn lets a slab allocator win the freed order-3 page
   back first — the reclaim-miss panic shows it reused as an `rt_mutex` rbtree —
   so the drain is moved to after the spray and the prepare set is filled with a
-  single interleaved clone+pin loop. This is the cross-cache reclaim's
-  reliability, the exploit's dominant failure mode on this device; it is best
-  measured on a cold-booted device (see the port notes).
+  single interleaved clone+pin loop. This was the exploit's dominant failure
+  mode on this device, and the ordering settles it: measured on XIG07 the chain
+  now reaches arbitrary kernel R/W on the **first attempt**, three runs out of
+  three, on a warm device with dozens of crash-reboots behind it — the state the
+  earlier notes recorded as taking the rate to zero. The miss was the exploit's
+  own allocations between the free and the spray, not ambient buddy state.
 
 `core612` carries one delta against warhol-root, and only this one:
 
