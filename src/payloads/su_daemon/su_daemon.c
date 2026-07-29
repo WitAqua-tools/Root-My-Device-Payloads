@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <dlfcn.h>
@@ -10,6 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/mount.h>
 #include <sys/prctl.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -17,6 +19,7 @@
 #include <sys/types.h>
 #include <sys/un.h>
 #include <sys/wait.h>
+#include <sys/xattr.h>
 #include <termios.h>
 #include <unistd.h>
 
@@ -672,9 +675,156 @@ static void serve_one(int conn) {
   free_request(&request);
 }
 
+/*
+ * Pin /proc/sys/kernel/random/boot_id back to the value the device booted with.
+ *
+ * This is the repair for the one piece of collateral that stops the device
+ * being usable afterwards, and the chain is longer than it looks.
+ *
+ * core612's 64-bit read is a write to a known kernel global followed by reading
+ * that global back out through proc, and the global it borrows is the boot_id
+ * buffer -- that is how the value crosses into userspace at all. Nothing puts
+ * it back, and worse, the writes do not stop when the run does: read boot_id
+ * after a run and it is not a UUID but a kernel pointer, and a different one
+ * over time --
+ *
+ *     0080b302-80ff-ffff-90a9-520280ffffff
+ *     40963516-80ff-ffff-90a9-520280ffffff
+ *
+ * -- the low half moving while the high half stays at the scratch address.
+ *
+ * Android names the ashmem character device after the boot id: init creates
+ * /dev/ashmem<boot_id> at boot, and libcutils recomputes that path in every
+ * process that needs it, because get_ashmem_device_path() reads the file each
+ * time. Once the file stops matching, every process started afterwards looks
+ * for a node that was never created:
+ *
+ *     E ashmem : Unable to open ashmem device: No such file or directory
+ *
+ * That lands where it hurts. bindApplication hands the application a
+ * SharedMemory over binder; SharedMemory's constructor asks libcutils for the
+ * region size; libcutils cannot validate the descriptor without the device, and
+ * the transaction throws:
+ *
+ *     java.lang.IllegalArgumentException: FileDescriptor is not a valid ashmem fd
+ *       at android.os.SharedMemory.<init>
+ *       at android.app.IApplicationThread$Stub.onTransact
+ *
+ * So the Application object is never built and the activity launch behind it
+ * dies on it with a NullPointerException in ConfigurationController. *Every*
+ * application started after a run does this. The ones already resident are
+ * fine, which is why `am start -W` on Settings answers `Status: ok` while the
+ * device is, from the user's side, broken -- and why this went unnoticed.
+ *
+ * The value the device booted with is not lost: init spelled it into the device
+ * node's own name, so it can be read back off /dev. Writing it into a file and
+ * bind-mounting that over the proc entry makes every later reader see it again,
+ * which is what the node is named after. Measured on warhol: 0 of 7 launchable
+ * third-party applications survive a launch before this, 6 of 7 after, against
+ * a clean-boot baseline of 7.
+ *
+ * The alternatives do not hold. Restoring the buffer itself is not available --
+ * the write primitive only places real kernel pointers -- and hard-linking the
+ * node under each new name loses the race: 484 links in, applications were
+ * still dying, because the value moves at process-creation time, which is
+ * exactly when the application reads it.
+ */
+#define BOOT_ID_PATH "/proc/sys/kernel/random/boot_id"
+#define BOOT_ID_PINNED "/dev/.rmd_boot_id"
+#define ASHMEM_PREFIX "ashmem"
+#define BOOT_ID_LEN 36U
+
+static int read_first_line(const char *path, char *out, size_t size) {
+  int fd = open(path, O_RDONLY | O_CLOEXEC);
+  if (fd < 0) {
+    return 0;
+  }
+  ssize_t got = read(fd, out, size - 1);
+  close(fd);
+  if (got <= 0) {
+    return 0;
+  }
+  out[got] = '\0';
+  char *newline = strchr(out, '\n');
+  if (newline) {
+    *newline = '\0';
+  }
+  return 1;
+}
+
+/* The boot id init actually used, read back off the name of the node it made:
+ * "ashmem" followed by a 36-character UUID, on a character device. */
+static int find_booted_boot_id(char *out, size_t size) {
+  DIR *dev = opendir("/dev");
+  if (!dev) {
+    return 0;
+  }
+  int found = 0;
+  struct dirent *entry;
+  while (!found && (entry = readdir(dev)) != NULL) {
+    if (strncmp(entry->d_name, ASHMEM_PREFIX, sizeof(ASHMEM_PREFIX) - 1) != 0 ||
+        strlen(entry->d_name) != sizeof(ASHMEM_PREFIX) - 1 + BOOT_ID_LEN) {
+      continue;
+    }
+    char path[96];
+    struct stat st;
+    snprintf(path, sizeof(path), "/dev/%s", entry->d_name);
+    if (stat(path, &st) == 0 && S_ISCHR(st.st_mode)) {
+      snprintf(out, size, "%s", entry->d_name + sizeof(ASHMEM_PREFIX) - 1);
+      found = 1;
+    }
+  }
+  closedir(dev);
+  return found;
+}
+
+static void pin_boot_id(void) {
+  char booted[BOOT_ID_LEN + 1];
+  char current[64];
+  if (!find_booted_boot_id(booted, sizeof(booted)) ||
+      !read_first_line(BOOT_ID_PATH, current, sizeof(current))) {
+    return;
+  }
+  if (strcmp(booted, current) == 0) {
+    /* Either the oracle has not run yet or this is a second install: the file
+     * already says what the device node is named after, so there is nothing to
+     * pin and nothing to stack a second mount onto. */
+    return;
+  }
+
+  /* The label is copied rather than left to a type transition, because the
+   * readers are applications and this has to keep working once ksud puts
+   * enforcing back. */
+  char context[128];
+  ssize_t context_len =
+      getxattr(BOOT_ID_PATH, "security.selinux", context, sizeof(context));
+
+  int fd = open(BOOT_ID_PINNED, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0444);
+  if (fd < 0) {
+    return;
+  }
+  char line[BOOT_ID_LEN + 2];
+  int len = snprintf(line, sizeof(line), "%s\n", booted);
+  int written = len > 0 && write(fd, line, (size_t)len) == (ssize_t)len;
+  close(fd);
+  if (!written) {
+    unlink(BOOT_ID_PINNED);
+    return;
+  }
+  chmod(BOOT_ID_PINNED, 0444);
+  if (context_len > 0) {
+    setxattr(BOOT_ID_PINNED, "security.selinux", context, (size_t)context_len,
+             0);
+  }
+  if (mount(BOOT_ID_PINNED, BOOT_ID_PATH, NULL, MS_BIND, NULL) != 0) {
+    unlink(BOOT_ID_PINNED);
+  }
+}
+
 static int daemon_main(void) {
   signal(SIGPIPE, SIG_IGN);
   set_root_env();
+  pin_boot_id();
 
   int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
   if (fd < 0) {
