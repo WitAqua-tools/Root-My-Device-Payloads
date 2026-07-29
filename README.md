@@ -62,7 +62,7 @@ rather than imported. Neither port has a file by that name — their app glue is
 re-importing a core is still "replace everything there but `root.c`", and the
 build lists it apart from the imported sources for the same reason.
 
-`core61` carries four deltas against the tree it was taken from, all of them
+`core61` carries five deltas against the tree it was taken from, all of them
 things that tree had never had to answer because every target it shipped was a
 Samsung one. Each is gated on a macro whose default is what upstream did, so a
 target that says nothing gets upstream's behaviour unchanged:
@@ -93,6 +93,14 @@ target that says nothing gets upstream's behaviour unchanged:
 - `util.c` asks `payload_mte_tagged()` rather than passing a hard-coded
   `mte_enabled = 0`, which is the same delta `core612` carries and for the same
   reason.
+- `util.c` canonicalises the fake-pointer base to the `0xff` top byte when MTE
+  is on. On a kernel running `KASAN_HW_TAGS` in synchronous mode a mistagged
+  kernel dereference is a hard fault, and the pointers the exploit stores for
+  the kernel to walk point into the reclaimed sk_buff page, whose tag is not
+  the one the leak matched. arm64's `TCR_EL1.TCMA1` exempts a kernel pointer
+  tagged `0xF` from checking — the match-all tag `kasan_reset_tag()` uses — so
+  tagging the intra-page pointers `0xF` stops the pi-chain walk faulting on the
+  mismatch. Gated on `payload_mte_tagged()`; the leak keeps the real tag.
 
 `core612` carries one delta against warhol-root, and only this one:
 
