@@ -717,18 +717,31 @@ static int daemon_main(void) {
   }
 }
 
-static int umh_main(int argc, char **argv) {
+/*
+ * The uid to serve, as a word rather than as a second argument.
+ *
+ * When the payload cannot fork this helper itself -- an application's process
+ * carries Android's seccomp filter and the helper would inherit it -- it has
+ * init exec the helper instead, by overwriting an init service's argv strings
+ * in place. In place means the length cannot change, so a uid cannot be
+ * appended as a separate word: it has to fit inside the argument that is
+ * already there. `--umh=<uid>` padded out with spaces is what fits, so the
+ * padding is trimmed here rather than rejected.
+ */
+static int umh_serve(const char *uid_text) {
   if (geteuid() != 0) {
     return 126;
   }
-  if (argc != 3) {
-    return 124;
-  }
   char *end = NULL;
   errno = 0;
-  unsigned long parsed_uid = strtoul(argv[2], &end, 10);
-  if (errno || end == argv[2] || *end || parsed_uid == 0 ||
-      parsed_uid > UINT32_MAX) {
+  unsigned long parsed_uid = strtoul(uid_text, &end, 10);
+  if (errno || end == uid_text || parsed_uid == 0 || parsed_uid > UINT32_MAX) {
+    return 123;
+  }
+  while (*end == ' ') {
+    end++;
+  }
+  if (*end) {
     return 123;
   }
   allowed_client_uid = (uid_t)parsed_uid;
@@ -763,6 +776,13 @@ static int umh_main(int argc, char **argv) {
     return 125;
   }
   return daemon_main();
+}
+
+static int umh_main(int argc, char **argv) {
+  if (argc != 3) {
+    return 124;
+  }
+  return umh_serve(argv[2]);
 }
 
 static int payload_runner_main(int argc, char **argv) {
@@ -806,6 +826,9 @@ int main(int argc, char **argv) {
   }
   if (argc >= 2 && strcmp(argv[1], "--umh") == 0) {
     return umh_main(argc, argv);
+  }
+  if (argc >= 2 && strncmp(argv[1], "--umh=", 6) == 0) {
+    return umh_serve(argv[1] + 6);
   }
   return client_main(argc, argv);
 }
