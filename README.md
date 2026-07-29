@@ -62,7 +62,7 @@ rather than imported. Neither port has a file by that name — their app glue is
 re-importing a core is still "replace everything there but `root.c`", and the
 build lists it apart from the imported sources for the same reason.
 
-`core61` carries seven deltas against the tree it was taken from, all of them
+`core61` carries eight deltas against the tree it was taken from, all of them
 things that tree had never had to answer because every target it shipped was a
 Samsung one. Each is gated on a macro whose default is what upstream did, so a
 target that says nothing gets upstream's behaviour unchanged:
@@ -114,6 +114,16 @@ target that says nothing gets upstream's behaviour unchanged:
   fake-pointer base is canonicalised. This is the route around the pipe cache
   gate, which has not been made to pass on this target; it reaches the install
   but a full run through it has not completed here.
+- `util.c`'s `prepare_kernel_page` takes its reclaim ordering from the working
+  MT6897 6.1.138 reference rather than upstream's: it frees the target mm and
+  sprays the sk_buff with nothing in between, where upstream drains a second
+  set of cpu-partial slabs (32 close+kill) in that gap. On this SoC the
+  intervening allocator churn lets a slab allocator win the freed order-3 page
+  back first — the reclaim-miss panic shows it reused as an `rt_mutex` rbtree —
+  so the drain is moved to after the spray and the prepare set is filled with a
+  single interleaved clone+pin loop. This is the cross-cache reclaim's
+  reliability, the exploit's dominant failure mode on this device; it is best
+  measured on a cold-booted device (see the port notes).
 
 `core612` carries one delta against warhol-root, and only this one:
 
