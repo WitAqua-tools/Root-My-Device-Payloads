@@ -95,47 +95,14 @@
 #define SELINUX_POLICY_MAX (32U * 1024U * 1024U)
 
 /*
- * Put the kernel's cached policy capabilities back, immediately before ksud
- * turns enforcing back on.
- *
- * The exploit goes permissive with one 64-bit write over the head of
- * `selinux_state`, and the value it places has to be a real kernel pointer --
- * the primitive dereferences it -- so only the low byte, `enforcing`, can be
- * chosen. The other seven land on the fields behind it, `policycap[]` among
- * them, and switch on capabilities the policy does not have. The one that
- * matters is always_check_network: with it set the kernel starts checking
- * netif/node/peer on every packet, and this policy grants none of those,
- * because it never asked for the capability.
- *
- * While SELinux is permissive that is only noise in the log. It would stop
- * being noise at the moment enforcing comes back, which is something ksud does
- * a few seconds from here -- every socket in the system would be denied.
- *
- * To be clear about what this is and is not: it is a latent defect, repaired
- * here because the repair is cheap and provably harmless. It is *not* the
- * cause of applications dying on launch after a run. That was measured
- * separately, against a clean-boot control, and survives this repair; see the
- * open-defect section of the port notes.
- *
- * The payload repairs this once already, right after the write: a policy
- * reload runs security_load_policycaps(), which rewrites the whole array from
- * the policy. Measured on warhol, that reload is faithful and idempotent --
- * three round trips leave the policy byte-identical in size and every
- * capability unchanged -- but it happens while the exploit is still running,
- * and a run has been seen where the array was corrupt again by the time
- * anything looked. So it is done again here, where "again" costs a 1.6 MB
- * read and write and where nothing can land after it: this is the last root,
- * permissive moment before ksud.
- */
-/*
- * `enforcing` is the one byte of that word the write does choose, and it has to
- * read back as exactly "0" here: the exploit cleared it and nothing since is
- * supposed to have touched it. A run has been seen where it read "166" -- a
- * byte of a kernel pointer, not a boolean -- which is the same word being
- * written a second time. A policy reload cannot repair that byte, so this only
+ * /sys/fs/selinux/enforce has to read back as exactly "0" here: the exploit
+ * cleared it and nothing since is supposed to have touched it. A run has been
+ * seen where it read "166" -- a byte of a kernel pointer, not a boolean --
+ * which is the residual writer described in su_daemon.c landing on this word
+ * instead of the boot_id one. Nothing here can repair that byte, so this only
  * reports it; but it is the difference between "ksud turned enforcing back on"
- * and "the SELinux state was already garbage", and that is worth knowing from
- * the log rather than from the device afterwards.
+ * and "the SELinux state was already garbage", and that belongs in the log
+ * rather than in what the device does afterwards.
  */
 static void report_enforcing_byte(int report_fd) {
   char value[16];
@@ -157,6 +124,37 @@ static void report_enforcing_byte(int report_fd) {
   }
 }
 
+/*
+ * Put the kernel's cached policy capabilities back, immediately before ksud
+ * turns enforcing back on.
+ *
+ * The exploit goes permissive with one 64-bit write over the head of
+ * `selinux_state`, and the value it places has to be a real kernel pointer --
+ * the primitive dereferences it -- so only the low byte, `enforcing`, can be
+ * chosen. The other seven land on the fields behind it, `policycap[]` among
+ * them, and switch on capabilities the policy does not have. The one that
+ * matters is always_check_network: with it set the kernel starts checking
+ * netif/node/peer on every packet, and this policy grants none of those,
+ * because it never asked for the capability.
+ *
+ * While SELinux is permissive that is only noise in the log. It would stop
+ * being noise at the moment enforcing comes back, which is something ksud does
+ * a few seconds from here -- every socket in the system would be denied.
+ *
+ * This is a latent defect and nothing more: it is not what used to stop
+ * applications launching after a run. That was the boot_id scratch, and it is
+ * repaired in su_daemon.c.
+ *
+ * The payload repairs this once already, right after the write: a policy
+ * reload runs security_load_policycaps(), which rewrites the whole array from
+ * the policy. Measured on warhol, that reload is faithful and idempotent --
+ * three round trips leave the policy byte-identical in size and every
+ * capability unchanged -- but it happens while the exploit is still running,
+ * and a run has been seen where the array was corrupt again by the time
+ * anything looked. So it is done again here, where "again" costs a 1.6 MB
+ * read and write and where nothing can land after it: this is the last root,
+ * permissive moment before ksud.
+ */
 static void reload_selinux_policy(int report_fd) {
   report_enforcing_byte(report_fd);
 
