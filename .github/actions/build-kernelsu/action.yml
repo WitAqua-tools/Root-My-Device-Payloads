@@ -24,7 +24,8 @@ inputs:
   patch-sets:
     description: >
       space-separated patch sets this build takes on top of common, named as
-      directories under the patch submodule's patches/, may be empty
+      directories under the patch submodule's patches/<version>/, where the
+      version comes from the KernelSU pin and not from here; may be empty
     required: false
     default: ""
   ndk-version:
@@ -43,20 +44,42 @@ runs:
     # ones -- device-specific ones included, which is why none of them live
     # beside the target here.
     #
-    # patches/common is what no target can boot without and goes on every
-    # build. Everything else is a set the build named in its kernelsu.json, so
-    # a vendor's workarounds are not even present in the tree of a build that
-    # is not that vendor's.
+    # patches/<version>/common is what no target can boot without and goes on
+    # every build. Everything else is a set the build named in its
+    # kernelsu.json, so a vendor's workarounds are not even present in the tree
+    # of a build that is not that vendor's.
+    #
+    # <version> is derived from the pin rather than named anywhere, so the sets
+    # that apply and the tree they apply to cannot come apart: moving the pin
+    # selects a different directory, and a pin with no directory fails here
+    # instead of building against hunks written for another revision.
     - name: Apply the KernelSU patches
       shell: bash
       env:
         PATCH_SETS: ${{ inputs.patch-sets }}
       run: |
         shopt -s nullglob
-        root=src/kernelsu/Root-My-Device-KSU/patches
+
+        # The same expression kernel/Kbuild compiles into KSU_VERSION, so the
+        # directory is named after the version the module will report. A
+        # shallow checkout counts 1 and would both look for patches/30001 and
+        # build a module claiming version 30001 -- under the manager's
+        # MINIMAL_SUPPORTED_KERNEL of 32513, and so rejected on the device
+        # rather than here. Say that, instead of leaving it to the device.
+        if [ "$(git -C src/kernelsu/KernelSU rev-parse --is-shallow-repository)" != false ]; then
+          echo "::error::the KernelSU submodule is a shallow checkout, so it has no"
+          echo "::error::commit count to take a version from; check out with fetch-depth: 0"
+          exit 1
+        fi
+        version=$((30000 + $(git -C src/kernelsu/KernelSU rev-list --count HEAD)))
+        echo "KernelSU version: $version"
+        root=src/kernelsu/Root-My-Device-KSU/patches/$version
+        echo "KSU_EXPECTED_VERSION=$version" >> "$GITHUB_ENV"
 
         if [ ! -d "$root" ]; then
-          echo "::error::$root is missing; check out the submodules"
+          echo "::error::no patches for KernelSU $version at $root;"
+          echo "::error::either the submodules are not checked out, or the pin moved"
+          echo "::error::to a revision nothing has been rebased onto yet"
           exit 1
         fi
 
@@ -89,6 +112,7 @@ runs:
     - name: Build the ${{ inputs.id }} kernel module
       shell: bash
       run: |
+        set -o pipefail
         docker run --rm \
           -v "$PWD:/workspace" \
           -w /workspace/src/kernelsu/KernelSU/kernel \
@@ -121,8 +145,20 @@ runs:
             # written literally before expansion, so $TARGET_CONFIG would be
             # run as a command instead of setting the options.
             env CONFIG_KSU=m $TARGET_CONFIG KBUILD_MODPOST_WARN=1 CC=clang make -j"$(nproc)"
-          '
+          ' | tee kernelsu-build.log
         sudo chown -R "$(id -u):$(id -g)" src/kernelsu/KernelSU
+
+        # Kbuild prints what it compiled in, and that number is only right if
+        # git resolved inside the container. It reaches the device as the
+        # version the manager accepts or refuses, so close the loop here rather
+        # than reading it out of a log after a run.
+        built=$(sed -n 's/^-- KernelSU version: //p' kernelsu-build.log | tail -1)
+        echo "built=$built expected=$KSU_EXPECTED_VERSION"
+        if [ "$built" != "$KSU_EXPECTED_VERSION" ]; then
+          echo "::error::the module was built as KernelSU $built, not $KSU_EXPECTED_VERSION"
+          exit 1
+        fi
+        rm -f kernelsu-build.log
 
     # Both of these are load-time contracts with the target kernel, and both
     # fail on the device rather than in the build if they are wrong.

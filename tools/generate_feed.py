@@ -16,6 +16,7 @@ Modes:
 
 import argparse
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -51,8 +52,37 @@ FIELD_TYPES = {"sdk": int, "pageSize": int}
 DEVICE_ONLY_FIELDS = ["kernelVersion", "kernelBuildVersion"]
 
 # Where the KernelSU patch sets live. A kernelsu.json names the ones its build
-# takes on top of common, as directory names under this.
-PATCH_SETS_DIR = Path("src/kernelsu/Root-My-Device-KSU/patches")
+# takes on top of common, as directory names under patches/<version>/ -- see
+# patch_sets_dir for where the version comes from.
+PATCHES_DIR = Path("src/kernelsu/Root-My-Device-KSU/patches")
+KERNELSU_DIR = Path("src/kernelsu/KernelSU")
+
+
+def patch_sets_dir(root: Path) -> Path | None:
+    """patches/<version> for the pinned KernelSU, or None if it cannot be read.
+
+    <version> is KernelSU's own number -- 30000 + the commit count, the same
+    expression kernel/Kbuild compiles into KSU_VERSION -- and the build action
+    derives it the same way. Reading it off the pin in both places is what
+    stops the sets a build applies and the tree it applies them to disagreeing;
+    nothing writes the version down.
+
+    None when the submodule is not checked out, which a working copy is allowed
+    to be, or when the checkout is shallow and its count means nothing.
+    """
+    kernelsu = root / KERNELSU_DIR
+    try:
+        count = subprocess.run(
+            ["git", "-C", str(kernelsu), "rev-list", "--count", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if not count.isdigit() or int(count) < 2:
+        return None
+    return root / PATCHES_DIR / str(30000 + int(count))
 
 
 class Problems:
@@ -100,29 +130,34 @@ def check_patch_sets(root: Path, label: str, build: dict, problems: Problems) ->
     really matters; this is what makes the same mistake fail in seconds, before
     a matrix of kernel builds. CI checks the patch submodule out for exactly
     that reason, but a working copy without it is a normal thing to run this
-    from, so an absent patches/ is not itself a problem.
+    from, so an absent patches/<version>/ is not itself a problem.
     """
     sets = build.get("patchSets", [])
     if not isinstance(sets, list) or not all(isinstance(name, str) for name in sets):
         problems.add(f"{label}: kernelsu.json patchSets must be a list of strings")
         return
 
-    patches = root / PATCH_SETS_DIR
+    patches = patch_sets_dir(root)
     for name in sets:
         if name == "common":
             problems.add(f"{label}: patchSets names 'common', which every build takes anyway")
             continue
-        # The action takes these space-separated, and resolves each under
-        # patches/, so neither a name with a space in it nor one that climbs out
-        # of that directory is a set it could apply.
+        # The action takes these space-separated, and resolves each under the
+        # version directory, so neither a name with a space in it nor one that
+        # climbs out of that directory is a set it could apply. A version is
+        # not one of them either: the pin picks that, so a name that looks like
+        # one is a set nothing will find.
         if not name or any(character.isspace() for character in name):
             problems.add(f"{label}: patch set {name!r} is not a usable directory name")
             continue
         if name.startswith("/") or ".." in Path(name).parts:
-            problems.add(f"{label}: patch set {name!r} points outside {PATCH_SETS_DIR}")
+            problems.add(f"{label}: patch set {name!r} points outside {PATCHES_DIR}")
             continue
-        if patches.is_dir() and not any((patches / name).glob("*.patch")):
-            problems.add(f"{label}: patch set {name!r} has no patches at {PATCH_SETS_DIR / name}")
+        if patches is not None and patches.is_dir() and not any((patches / name).glob("*.patch")):
+            problems.add(
+                f"{label}: patch set {name!r} has no patches at "
+                f"{patches.relative_to(root) / name}"
+            )
 
 
 def load_sources(root: Path, problems: Problems) -> list[dict]:

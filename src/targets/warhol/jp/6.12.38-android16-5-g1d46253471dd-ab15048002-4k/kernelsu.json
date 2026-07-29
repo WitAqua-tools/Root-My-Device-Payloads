@@ -15,9 +15,10 @@
     "target is android15-6.6 -- so it is the first to use that DDK image.",
     "",
     "'patchSets' names the patch sets this build takes on top of common, as",
-    "directories under the patch submodule's patches/. warhol takes none: it",
-    "has no KDP/RKP/DEFEX, so it builds against a tree carrying only common,",
-    "whose staged late-load the bootstrap helper drives."
+    "directories under the patch submodule's patches/<version>/, where the",
+    "version is derived from the KernelSU submodule pin and named by no target.",
+    "warhol takes none: it has no KDP/RKP/DEFEX, so it builds against a tree",
+    "carrying only common, whose staged late-load the bootstrap helper drives."
   ],
   "id": "warhol",
   "kmi": "android16-6.12",

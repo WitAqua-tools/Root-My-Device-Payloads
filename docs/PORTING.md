@@ -225,7 +225,9 @@ device through the feed, so it is a target's property and never a default;
 release the module's `vermagic` must claim, which the build stamps over the DDK's
 own. `patchSets` names what this build takes on top of `common` — a set that
 resolves to no patches fails the build rather than being skipped, so a device
-with no vendor hardening names none.
+with no vendor hardening names none. It does not name a KernelSU version: the
+sets live under `patches/<version>/`, and the version comes from the submodule
+pin, not from any target.
 
 CI asserts the two load-time contracts: the module's `vermagic`, and an empty
 `__versions` section. It cannot do the audit against the device's own recovered

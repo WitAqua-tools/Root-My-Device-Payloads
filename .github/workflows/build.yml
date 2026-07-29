@@ -151,6 +151,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: true
+          # The module's KSU_VERSION is 30000 + the KernelSU submodule's commit
+          # count, and so is the name of the patch directory the action picks.
+          # A depth-1 checkout counts 1: it would look for patches/30001 and
+          # build a module claiming version 30001, which is below the manager's
+          # MINIMAL_SUPPORTED_KERNEL of 32513. Full history, in both jobs.
+          fetch-depth: 0
       - uses: ./.github/actions/build-kernelsu
         with:
           id: ${{ matrix.build.id }}
@@ -182,6 +188,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: true
+          # The module's KSU_VERSION is 30000 + the KernelSU submodule's commit
+          # count, and so is the name of the patch directory the action picks.
+          # A depth-1 checkout counts 1: it would look for patches/30001 and
+          # build a module claiming version 30001, which is below the manager's
+          # MINIMAL_SUPPORTED_KERNEL of 32513. Full history, in both jobs.
+          fetch-depth: 0
       - uses: ./.github/actions/build-kernelsu
         with:
           id: ${{ matrix.build.id }}

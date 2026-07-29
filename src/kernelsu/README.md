@@ -20,11 +20,20 @@ published together, because `ksud` embeds the module it loads.
 
 ## Which patches a build gets
 
-Each directory under `Root-My-Device-KSU/patches/` is one **patch set**, and a
-build's tree carries `common` plus whatever its `kernelsu.json` names in
-`patchSets`. Nothing else is applied to it, so a workaround for one vendor is
-not merely compiled out of another vendor's module — it is not in the tree that
-module was built from.
+The patches are keyed by the upstream version they were written against:
+`Root-My-Device-KSU/patches/<version>/<set>/`. **Nothing names the version.**
+The action derives it from the KernelSU submodule pin as `30000 + git rev-list
+--count HEAD` — KernelSU's own number, the one `kernel/Kbuild` compiles into
+`KSU_VERSION` — so moving the pin selects the sets written for it, and a pin
+nothing has been rebased onto fails the build instead of applying hunks meant
+for another tree. `Root-My-Device-KSU` keeps three versions at a time; which,
+and why those, is documented there.
+
+Each directory under that version is one **patch set**, and a build's tree
+carries `common` plus whatever its `kernelsu.json` names in `patchSets`.
+Nothing else is applied to it, so a workaround for one vendor is not merely
+compiled out of another vendor's module — it is not in the tree that module was
+built from.
 
 | Set | Applied to | Holds |
 | --- | --- | --- |
@@ -102,7 +111,10 @@ reproducing one by hand.
 
 ```sh
 git submodule update --init --recursive src/kernelsu
-patches="$PWD/src/kernelsu/Root-My-Device-KSU/patches"
+# the pin's own KernelSU version names the directory; a shallow submodule
+# counts 1 and belongs to no directory, which is the error you want
+version=$((30000 + $(git -C src/kernelsu/KernelSU rev-list --count HEAD)))
+patches="$PWD/src/kernelsu/Root-My-Device-KSU/patches/$version"
 # common first, then each set in patchSets, in the order it lists them
 for set in common <patchSets>; do
   git -C src/kernelsu/KernelSU apply "$patches/$set"/*.patch
