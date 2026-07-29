@@ -732,8 +732,34 @@ static int umh_main(int argc, char **argv) {
     return 123;
   }
   allowed_client_uid = (uid_t)parsed_uid;
-  if (setresgid(0, 0, 0) != 0 || setresuid(0, 0, 0) != 0 ||
-      getuid() != 0 || geteuid() != 0 || getgid() != 0 || getegid() != 0) {
+  /*
+   * Only call these if they would change something.
+   *
+   * Both routes arrive here already at 0 across the board -- core66's is
+   * exec'd by the kernel, core612's has just had init_cred installed over its
+   * own -- so on the normal path these are no-ops. They were belt and braces
+   * in front of the check below, which is the part that matters.
+   *
+   * They are not free, though. The application's payload runs inside an app
+   * process, and an app carries Android's seccomp filter, which this helper
+   * inherits across fork and exec and which no amount of uid 0 removes.
+   * setresgid is not on the app allowlist: it is arm64 syscall 149, and
+   * calling it killed the helper with SIGSYS the moment the app route first
+   * got far enough to exec it --
+   *
+   *     Fatal signal 31 (SIGSYS), code 1 (SYS_SECCOMP), syscall 149
+   *     seccomp prevented call to disallowed arm64 system call 149
+   *
+   * which the payload saw only as `su install helper exited early status=31`.
+   * The adb route never hit it because a shell process carries no such filter.
+   */
+  if ((getgid() != 0 || getegid() != 0) && setresgid(0, 0, 0) != 0) {
+    return 125;
+  }
+  if ((getuid() != 0 || geteuid() != 0) && setresuid(0, 0, 0) != 0) {
+    return 125;
+  }
+  if (getuid() != 0 || geteuid() != 0 || getgid() != 0 || getegid() != 0) {
     return 125;
   }
   return daemon_main();
