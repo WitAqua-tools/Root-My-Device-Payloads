@@ -78,6 +78,27 @@ def git_output(repository: Path, *arguments: str) -> str | None:
     return result.stdout.strip() or None
 
 
+def kernelsu_repo(root: Path) -> Path | None:
+    """The KernelSU submodule, but only if git answers *for it*.
+
+    An uninitialised submodule is an empty directory inside this repository, and
+    `git -C` in one walks up and answers for the parent -- so the count would be
+    this repository's, and the feed would publish a KernelSU version that is
+    really the payload repo's commit count. kernel/Kbuild guards the same way,
+    comparing its own toplevel against the kernel tree's.
+    """
+    kernelsu = root / KERNELSU_DIR
+    toplevel = git_output(kernelsu, "rev-parse", "--show-toplevel")
+    if toplevel is None:
+        return None
+    try:
+        if Path(toplevel).resolve() != kernelsu.resolve():
+            return None
+    except OSError:
+        return None
+    return kernelsu
+
+
 def kernelsu_version(root: Path) -> int | None:
     """KernelSU's own version number for the pinned submodule.
 
@@ -89,7 +110,10 @@ def kernelsu_version(root: Path) -> int | None:
     None when the submodule is not checked out, or when the checkout is shallow
     and its count means nothing.
     """
-    count = git_output(root / KERNELSU_DIR, "rev-list", "--count", "HEAD")
+    kernelsu = kernelsu_repo(root)
+    if kernelsu is None:
+        return None
+    count = git_output(kernelsu, "rev-list", "--count", "HEAD")
     if count is None or not count.isdigit() or int(count) < 2:
         return None
     return 30000 + int(count)
@@ -110,9 +134,9 @@ def kernelsu_manager(root: Path) -> dict | None:
     points at the releases page, which is still somewhere to go.
     """
     version = kernelsu_version(root)
-    if version is None:
+    kernelsu = kernelsu_repo(root)
+    if version is None or kernelsu is None:
         return None
-    kernelsu = root / KERNELSU_DIR
     tag = git_output(kernelsu, "describe", "--tags", "--exact-match")
     name = tag or git_output(kernelsu, "describe", "--tags", "--always")
     url = (
@@ -406,17 +430,23 @@ def main() -> int:
     # two KernelSU builds would need it per entry anyway.
     manager = kernelsu_manager(args.root)
     if manager is None:
+        # A feed with no entries is a valid thing to publish while every port
+        # is still in progress, and it names no module, so it needs no manager
+        # either. Only an entry does.
+        if any(feed_ready(target) for target in targets):
+            print(
+                "cannot read the pinned KernelSU version, so the feed cannot say "
+                "which manager its modules pair with; check out "
+                "src/kernelsu/KernelSU with full history",
+                file=sys.stderr,
+            )
+            return 1
+        manager = {}
+    else:
         print(
-            "cannot read the pinned KernelSU version, so the feed cannot say which "
-            "manager the modules pair with; check out src/kernelsu/KernelSU with "
-            "full history",
-            file=sys.stderr,
+            f"KernelSU manager: {manager['managerVersionName']} "
+            f"({manager['managerVersionCode']}) -> {manager['managerUrl']}"
         )
-        return 1
-    print(
-        f"KernelSU manager: {manager['managerVersionName']} "
-        f"({manager['managerVersionCode']}) -> {manager['managerUrl']}"
-    )
 
     entries = []
     for target in targets:

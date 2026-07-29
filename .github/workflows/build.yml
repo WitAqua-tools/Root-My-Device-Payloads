@@ -226,6 +226,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The feed names the KernelSU manager each module pairs with, and
+          # that comes from the pin the module was built from -- so this job
+          # needs the submodule, with the history the count is taken from,
+          # exactly as the build jobs do.
+          submodules: true
+          fetch-depth: 0
 
       - uses: actions/download-artifact@v4
         with:
