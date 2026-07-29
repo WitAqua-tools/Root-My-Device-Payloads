@@ -107,10 +107,15 @@
  * netif/node/peer on every packet, and this policy grants none of those,
  * because it never asked for the capability.
  *
- * While SELinux is permissive that is only noise in the log. It stops being
- * noise at the moment enforcing comes back, which is something ksud does a few
- * seconds from here -- and then every socket in the system is denied and
- * almost nothing works.
+ * While SELinux is permissive that is only noise in the log. It would stop
+ * being noise at the moment enforcing comes back, which is something ksud does
+ * a few seconds from here -- every socket in the system would be denied.
+ *
+ * To be clear about what this is and is not: it is a latent defect, repaired
+ * here because the repair is cheap and provably harmless. It is *not* the
+ * cause of applications dying on launch after a run. That was measured
+ * separately, against a clean-boot control, and survives this repair; see the
+ * open-defect section of the port notes.
  *
  * The payload repairs this once already, right after the write: a policy
  * reload runs security_load_policycaps(), which rewrites the whole array from
