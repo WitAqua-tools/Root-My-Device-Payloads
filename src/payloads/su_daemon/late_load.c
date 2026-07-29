@@ -3,11 +3,14 @@
 #include "su_daemon.h"
 
 #include <errno.h>
+#include <fcntl.h>
 #include <sched.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/mount.h>
+#include <sys/stat.h>
 #include <sys/syscall.h>
 #include <unistd.h>
 
@@ -87,6 +90,135 @@
 #define LATE_LOAD_ALLOW_SHELL_ARG 4U
 #define LATE_LOAD_ALLOW_SHELL_WORD "allow-shell"
 
+#define SELINUX_POLICY_PATH "/sys/fs/selinux/policy"
+#define SELINUX_LOAD_PATH "/sys/fs/selinux/load"
+#define SELINUX_POLICY_MAX (32U * 1024U * 1024U)
+
+/*
+ * Put the kernel's cached policy capabilities back, immediately before ksud
+ * turns enforcing back on.
+ *
+ * The exploit goes permissive with one 64-bit write over the head of
+ * `selinux_state`, and the value it places has to be a real kernel pointer --
+ * the primitive dereferences it -- so only the low byte, `enforcing`, can be
+ * chosen. The other seven land on the fields behind it, `policycap[]` among
+ * them, and switch on capabilities the policy does not have. The one that
+ * matters is always_check_network: with it set the kernel starts checking
+ * netif/node/peer on every packet, and this policy grants none of those,
+ * because it never asked for the capability.
+ *
+ * While SELinux is permissive that is only noise in the log. It stops being
+ * noise at the moment enforcing comes back, which is something ksud does a few
+ * seconds from here -- and then every socket in the system is denied and
+ * almost nothing works.
+ *
+ * The payload repairs this once already, right after the write: a policy
+ * reload runs security_load_policycaps(), which rewrites the whole array from
+ * the policy. Measured on warhol, that reload is faithful and idempotent --
+ * three round trips leave the policy byte-identical in size and every
+ * capability unchanged -- but it happens while the exploit is still running,
+ * and a run has been seen where the array was corrupt again by the time
+ * anything looked. So it is done again here, where "again" costs a 1.6 MB
+ * read and write and where nothing can land after it: this is the last root,
+ * permissive moment before ksud.
+ */
+/*
+ * `enforcing` is the one byte of that word the write does choose, and it has to
+ * read back as exactly "0" here: the exploit cleared it and nothing since is
+ * supposed to have touched it. A run has been seen where it read "166" -- a
+ * byte of a kernel pointer, not a boolean -- which is the same word being
+ * written a second time. A policy reload cannot repair that byte, so this only
+ * reports it; but it is the difference between "ksud turned enforcing back on"
+ * and "the SELinux state was already garbage", and that is worth knowing from
+ * the log rather than from the device afterwards.
+ */
+static void report_enforcing_byte(int report_fd) {
+  char value[16];
+  int fd = open("/sys/fs/selinux/enforce", O_RDONLY | O_CLOEXEC);
+  if (fd < 0) {
+    return;
+  }
+  ssize_t got = read(fd, value, sizeof(value) - 1);
+  close(fd);
+  if (got <= 0) {
+    return;
+  }
+  value[got] = '\0';
+  if (strcmp(value, "0") != 0) {
+    dprintf(report_fd,
+            "late-load: selinux enforce reads '%s', expected '0' -- the state "
+            "word has been written again since the exploit cleared it\n",
+            value);
+  }
+}
+
+static void reload_selinux_policy(int report_fd) {
+  report_enforcing_byte(report_fd);
+
+  int policy_fd = open(SELINUX_POLICY_PATH, O_RDONLY | O_CLOEXEC);
+  if (policy_fd < 0) {
+    dprintf(report_fd, "late-load: selinux policy unreadable: %s\n",
+            strerror(errno));
+    return;
+  }
+  struct stat st;
+  if (fstat(policy_fd, &st) != 0 || st.st_size <= 0 ||
+      (size_t)st.st_size > SELINUX_POLICY_MAX) {
+    close(policy_fd);
+    dprintf(report_fd, "late-load: selinux policy size refused\n");
+    return;
+  }
+
+  size_t len = (size_t)st.st_size;
+  char *policy = malloc(len);
+  if (!policy) {
+    close(policy_fd);
+    return;
+  }
+  size_t done = 0;
+  while (done < len) {
+    ssize_t got = read(policy_fd, policy + done, len - done);
+    if (got < 0 && errno == EINTR) {
+      continue;
+    }
+    if (got <= 0) {
+      break;
+    }
+    done += (size_t)got;
+  }
+  close(policy_fd);
+  if (done != len) {
+    free(policy);
+    dprintf(report_fd, "late-load: selinux policy short read %zu/%zu\n", done,
+            len);
+    return;
+  }
+
+  /* One write: the kernel takes the policy as a single image. */
+  int load_fd = open(SELINUX_LOAD_PATH, O_WRONLY | O_CLOEXEC);
+  if (load_fd < 0) {
+    free(policy);
+    dprintf(report_fd, "late-load: selinux load unwritable: %s\n",
+            strerror(errno));
+    return;
+  }
+  ssize_t wrote;
+  do {
+    wrote = write(load_fd, policy, len);
+  } while (wrote < 0 && errno == EINTR);
+  int saved_errno = errno;
+  close(load_fd);
+  free(policy);
+
+  if (wrote != (ssize_t)len) {
+    dprintf(report_fd, "late-load: selinux policy reload failed: %s\n",
+            strerror(saved_errno));
+    return;
+  }
+  dprintf(report_fd, "late-load: policy capabilities restored (%zu bytes)\n",
+          len);
+}
+
 struct ksu_get_info_cmd {
   uint32_t version;
   uint32_t flags;
@@ -162,6 +294,10 @@ int su_run_late_load(struct su_request *request, int conn) {
     }
     close(conn);
     close_request_fds(request);
+
+    /* Before the namespace, because it is about the whole system rather than
+     * this mount tree, and before ksud, because ksud is what makes it matter. */
+    reload_selinux_policy(STDERR_FILENO);
 
     if (unshare(CLONE_NEWNS) != 0 ||
         mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL) != 0) {
