@@ -62,7 +62,7 @@ rather than imported. Neither port has a file by that name — their app glue is
 re-importing a core is still "replace everything there but `root.c`", and the
 build lists it apart from the imported sources for the same reason.
 
-`core61` carries five deltas against the tree it was taken from, all of them
+`core61` carries seven deltas against the tree it was taken from, all of them
 things that tree had never had to answer because every target it shipped was a
 Samsung one. Each is gated on a macro whose default is what upstream did, so a
 target that says nothing gets upstream's behaviour unchanged:
@@ -101,6 +101,19 @@ target that says nothing gets upstream's behaviour unchanged:
   tagged `0xF` from checking — the match-all tag `kasan_reset_tag()` uses — so
   tagging the intra-page pointers `0xF` stops the pi-chain walk faulting on the
   mismatch. Gated on `payload_mte_tagged()`; the leak keeps the real tag.
+- `util.c`'s `is_direct_ptr()` strips the tag (`KPTR_UNTAG`, sign-extend bit 55)
+  before the linear-map range test. A pointer read out of the kernel — a
+  workqueue or worker-pool pointer in the umh route — carries its object's MTE
+  tag, so the raw value sits below `DIRECT_MAP_BASE` and the untagged test
+  rejected a valid pointer. Identity where MTE is off.
+- `root.c` can drive the usermodehelper install through the ashmem-fops R/W the
+  CFI stage already proved, instead of the pipe-buffer primitive and its cache
+  gate (`CVE43499_CONFIGFS_ROOT`). It addresses every kernel pointer it reads or
+  writes through the `0xF` match-all alias, and it moves the reclaimed page's
+  umh work item onto that alias too, for the same synchronous-MTE reason the
+  fake-pointer base is canonicalised. This is the route around the pipe cache
+  gate, which has not been made to pass on this target; it reaches the install
+  but a full run through it has not completed here.
 
 `core612` carries one delta against warhol-root, and only this one:
 
