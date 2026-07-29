@@ -80,8 +80,13 @@ module reports, so a run has evidence of KernelSU being live that does not
 depend on descriptors the sepolicy reload takes away:
 
 ```text
-KernelSU live: version=30001 uapi=2 flags=0x5 features=0x5 late_load=true
+KernelSU live: version=32525 uapi=2 flags=0x5 features=0x5 late_load=true
 ```
+
+Those first two numbers are the pair the manager shows on its home screen as
+`バージョン: 32525-2`, and both have to be right for it to accept the module:
+`requireNewKernel()` refuses a version below `MINIMAL_SUPPORTED_KERNEL` (32513)
+and a `uapi_version` that is not its own.
 
 **`galaxy` exists because a generic build panics on Samsung firmware**: an
 inline `put_cred()` writes directly to a KDP-protected credential refcount, RKP
