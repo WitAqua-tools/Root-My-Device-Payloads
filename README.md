@@ -198,6 +198,15 @@ device boots is the one that was read — prefer the device where there is one. 
 target whose `kernelVersion` is `null` still builds, but is reported and left out
 of the feed, because the app matches on those exact strings.
 
+Each entry's `kernelsu` object also names **which KernelSU manager that module
+pairs with** — `managerVersionCode`, `managerVersionName` and `managerUrl`,
+derived from the KernelSU submodule pin exactly as `KSU_VERSION` is. The two
+carry the same number and the manager refuses a module below its own
+`MINIMAL_SUPPORTED_KERNEL`, so which manager to install is not a matter of
+taste; publishing it with the module is what stops the app having to guess from
+a constant of its own. The three are read as optional on the app side, so a
+feed published before they existed still installs.
+
 Per-artifact SHA-256 fields and manifest signatures are not part of feed schema
 version 2.
 

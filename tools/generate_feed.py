@@ -56,33 +56,87 @@ DEVICE_ONLY_FIELDS = ["kernelVersion", "kernelBuildVersion"]
 # patch_sets_dir for where the version comes from.
 PATCHES_DIR = Path("src/kernelsu/Root-My-Device-KSU/patches")
 KERNELSU_DIR = Path("src/kernelsu/KernelSU")
+KERNELSU_RELEASES_URL = "https://github.com/tiann/KernelSU/releases"
+
+
+def git_output(repository: Path, *arguments: str) -> str | None:
+    """One git command's stdout, or None if git could not answer.
+
+    A working copy without the submodules is a normal thing to run this from,
+    so an unanswerable question is not by itself a problem here -- the build
+    action fails on the same conditions, loudly, where it matters.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repository), *arguments],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return result.stdout.strip() or None
+
+
+def kernelsu_version(root: Path) -> int | None:
+    """KernelSU's own version number for the pinned submodule.
+
+    30000 + the commit count, the same expression kernel/Kbuild compiles into
+    KSU_VERSION, which is also the manager's versionCode and the number the
+    module reports at run time. Nothing writes it down; every place that needs
+    it derives it from the pin, so they cannot disagree.
+
+    None when the submodule is not checked out, or when the checkout is shallow
+    and its count means nothing.
+    """
+    count = git_output(root / KERNELSU_DIR, "rev-list", "--count", "HEAD")
+    if count is None or not count.isdigit() or int(count) < 2:
+        return None
+    return 30000 + int(count)
+
+
+def kernelsu_manager(root: Path) -> dict | None:
+    """Which KernelSU manager the module pairs with, and where to get it.
+
+    The module and the manager carry the same number -- the manager shows the
+    pair on its home screen as `<version>-<uapi>` -- and it refuses a module
+    below its own MINIMAL_SUPPORTED_KERNEL. So which manager a build wants is
+    not a matter of taste, and the app should not have to guess it from a
+    constant compiled into itself: it is a property of the pin, and it travels
+    in the feed with everything else that is.
+
+    The download points at the release asset when the pin is exactly a tag,
+    because that is the only case where the file name is knowable. Off a tag it
+    points at the releases page, which is still somewhere to go.
+    """
+    version = kernelsu_version(root)
+    if version is None:
+        return None
+    kernelsu = root / KERNELSU_DIR
+    tag = git_output(kernelsu, "describe", "--tags", "--exact-match")
+    name = tag or git_output(kernelsu, "describe", "--tags", "--always")
+    url = (
+        f"{KERNELSU_RELEASES_URL}/download/{tag}/KernelSU_{tag}_{version}-release.apk"
+        if tag
+        else KERNELSU_RELEASES_URL
+    )
+    return {
+        "managerVersionCode": version,
+        "managerVersionName": name or str(version),
+        "managerUrl": url,
+    }
 
 
 def patch_sets_dir(root: Path) -> Path | None:
     """patches/<version> for the pinned KernelSU, or None if it cannot be read.
 
-    <version> is KernelSU's own number -- 30000 + the commit count, the same
-    expression kernel/Kbuild compiles into KSU_VERSION -- and the build action
-    derives it the same way. Reading it off the pin in both places is what
-    stops the sets a build applies and the tree it applies them to disagreeing;
-    nothing writes the version down.
-
-    None when the submodule is not checked out, which a working copy is allowed
-    to be, or when the checkout is shallow and its count means nothing.
+    The build action derives the same directory the same way, so the sets a
+    build applies and the tree it applies them to cannot come apart.
     """
-    kernelsu = root / KERNELSU_DIR
-    try:
-        count = subprocess.run(
-            ["git", "-C", str(kernelsu), "rev-list", "--count", "HEAD"],
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout.strip()
-    except (OSError, subprocess.SubprocessError):
+    version = kernelsu_version(root)
+    if version is None:
         return None
-    if not count.isdigit() or int(count) < 2:
-        return None
-    return root / PATCHES_DIR / str(30000 + int(count))
+    return root / PATCHES_DIR / str(version)
 
 
 class Problems:
@@ -345,6 +399,25 @@ def main() -> int:
         return 0
 
     report_pending(targets)
+
+    # One pin, so one manager for every entry -- but it belongs beside the
+    # module in each entry rather than at the top of the document, because it
+    # describes what that module pairs with, and a feed that some day carries
+    # two KernelSU builds would need it per entry anyway.
+    manager = kernelsu_manager(args.root)
+    if manager is None:
+        print(
+            "cannot read the pinned KernelSU version, so the feed cannot say which "
+            "manager the modules pair with; check out src/kernelsu/KernelSU with "
+            "full history",
+            file=sys.stderr,
+        )
+        return 1
+    print(
+        f"KernelSU manager: {manager['managerVersionName']} "
+        f"({manager['managerVersionCode']}) -> {manager['managerUrl']}"
+    )
+
     entries = []
     for target in targets:
         if not feed_ready(target):
@@ -374,7 +447,7 @@ def main() -> int:
             "size": ksud.stat().st_size,
             "kmi": build["kmi"],
             "managerPackage": build["managerPackage"],
-        }
+        } | manager
         entries.append(entry)
 
     if problems:
