@@ -60,6 +60,13 @@ runs:
       run: |
         shopt -s nullglob
 
+        for submodule in src/kernelsu/KernelSU src/kernelsu/Root-My-Device-KSU; do
+          if [ ! -e "$submodule/.git" ]; then
+            echo "::error::$submodule is missing; check out the submodules"
+            exit 1
+          fi
+        done
+
         # The same expression kernel/Kbuild compiles into KSU_VERSION, so the
         # directory is named after the version the module will report. A
         # shallow checkout counts 1 and would both look for patches/30001 and
