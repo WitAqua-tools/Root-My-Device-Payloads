@@ -23,6 +23,7 @@ and published as a release asset — see [Feed delivery](#feed-delivery).
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `pmg110-cn-16.0.9.400` | `core66` | OPPO PMG110 / K15 Pro+ | MediaTek MT6991 | CN | `PMG110_16.0.9.400(CN01)` | `6.6.118-android15-8-g93e223c276e7-abogki500782043-4k` (`android15-6.6`, 4K pages) | `OPPO/PMG110/OP61E5L1:16/BP2A.250605.015/B.c24acd_188efc3_187038b:user/release-keys` | Exploit core device-verified through the non-app build; the feed entry ships, but the app payload has not completed a run here. |
 | `warhol-jp-OS3.0.304.0.WPSJPXM` | `core612` | Xiaomi 17T Pro | MediaTek MT6993 | JP | `OS3.0.304.0.WPSJPXM` | `6.12.38-android16-5-g1d46253471dd-ab15048002-4k` (`android16-6.12`, 4K pages) | `Xiaomi/warhol_jp/warhol:16/BP2A.250605.031.A3/OS3.0.304.0.WPSJPXM:user/release-keys` | Working from the app, KernelSU `32525-2`. |
+| `xig07-jp-OS3.0.7.0.WNEJPKD` | `core61` | Xiaomi 14T (au XIG07) | MediaTek MT6897 | JP | `OS3.0.7.0.WNEJPKD` | `6.1.138-android14-11-g44bda9e8f6e9-ab13792638` (`android14-6.1`, 4K pages) | `Xiaomi/XIG07_jp_kdi/XIG07:16/BP2A.250605.031.A3/OS3.0.7.0.WNEJPKD:user/release-keys` | In bring-up. The offsets, the KASLR leak, the MTE answer and the fake waiter's placement are all device-confirmed; what has not landed yet is the reclaim, so no run has reached root. `kernelVersion` is null while that is true, which keeps the target out of the feed. |
 
 The Samsung profiles this repository began with were removed along with their
 payloads, artifacts, KernelSU builds and feed entries.
@@ -44,6 +45,7 @@ core with different offsets — and each target names the one it needs in
 
 | Core | Kernel | From | Route to root |
 | --- | --- | --- | --- |
+| `core61` | `android14-6.1` | Root-My-Galaxy-Payloads' own `src/`, the tree this repository is a fork of | queues a `call_usermodehelper` work item to exec the helper, the same route `core66` takes |
 | `core66` | `android15-6.6` | pmg110-root | swaps a forked *child*'s cred, then queues a `call_usermodehelper` work item from the still-unprivileged parent to exec the helper |
 | `core612` | `android16-6.12` | warhol-root — upstream popsicle plus the kernel-MTE fix that device needs | swaps the exploit process's own cred and reloads the SELinux policy, then execs the helper directly |
 
@@ -59,6 +61,38 @@ rather than imported. Neither port has a file by that name — their app glue is
 `preload.c`, `su_daemon.c` and an `.incbin` blob, none of which was copied — so
 re-importing a core is still "replace everything there but `root.c`", and the
 build lists it apart from the imported sources for the same reason.
+
+`core61` carries four deltas against the tree it was taken from, all of them
+things that tree had never had to answer because every target it shipped was a
+Samsung one. Each is gated on a macro whose default is what upstream did, so a
+target that says nothing gets upstream's behaviour unchanged:
+
+- `slide.c` no longer assumes the kworker caller sits within 2 MiB of its link
+  address, and no longer uses that distance as the physmap correction as well.
+  `SLIDE_KASLR_MIN` / `SLIDE_KASLR_MAX` / `SLIDE_KASLR_ALIGN` bound and align
+  the accepted distance, and `SLIDE_P0_TRACKS_KASLR` says whether it is also
+  the correction. Where CONFIG_RANDOMIZE_BASE runs off a bootloader seed the
+  distance is gigabytes and 2 MiB aligned and it moves the image's virtual
+  mapping only, so the physmap alias of an image symbol does not follow it. The
+  bounds also do the work of telling a kworker blocked in a kernel *module*
+  apart from one blocked in `worker_thread`.
+- `fops.c` builds the reclaimed `rt_mutex_waiter` by member rather than by
+  fd-set word. The words it wrote were one kernel's layout — the one where
+  `tree` and `pi_tree` each carry their own prio and deadline — and a kernel
+  with the pre-split 0x58-byte waiter reads `task` and `lock` from somewhere
+  else entirely and walks into nothing. `SLIDE_PSELECT_WORD_SHIFT` places word
+  zero, already named in the porting notes, and the member offsets come from
+  the shape the target selected.
+- `fops.c` fills the fds those bits name with an empty epoll instance rather
+  than the write end of a pipe. Which of the three sets the waiter's words fall
+  in follows from its shape and that shift; a pipe write end is always
+  writable, so a waiter reaching the write set makes `pselect` return before
+  the punch lands, and a pipe read end reports `EPOLLHUP` — readable, to
+  `select` — once the loop overwrites the last writer's fd. An empty epoll
+  instance is ready for none of the three.
+- `util.c` asks `payload_mte_tagged()` rather than passing a hard-coded
+  `mte_enabled = 0`, which is the same delta `core612` carries and for the same
+  reason.
 
 `core612` carries one delta against warhol-root, and only this one:
 
