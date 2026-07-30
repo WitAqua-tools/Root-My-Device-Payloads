@@ -49,117 +49,24 @@ core with different offsets — and each target names the one it needs in
 | `core66` | `android15-6.6` | pmg110-root | swaps a forked *child*'s cred, then queues a `call_usermodehelper` work item from the still-unprivileged parent to exec the helper |
 | `core612` | `android16-6.12` | warhol-root — upstream popsicle plus the kernel-MTE fix that device needs | swaps the exploit process's own cred and reloads the SELinux policy, then execs the helper directly |
 
-Neither core is this repository's own work and neither is edited to resemble
-the other, so a fix can be taken from upstream and no kernel's constants can
-leak into another kernel's tree. What is this repository's own is the glue
-around them — `<core>/root.c`, `mte.c`, `preload.c` and `payload.h`, described
-under [Layout](#layout).
+No core is this repository's own work and none is edited to resemble another, so
+a fix can be taken from upstream and no kernel's constants can leak into another
+kernel's tree. What is this repository's own is the glue around them —
+`<core>/root.c`, `mte.c`, `preload.c` and `payload.h`, described under
+[Layout](#layout).
 
 A core's own code stays in that core's directory, `root.c` included: it is the
 one file under `src/payloads/<payload>/<core>/` that this repository wrote
-rather than imported. Neither port has a file by that name — their app glue is
-`preload.c`, `su_daemon.c` and an `.incbin` blob, none of which was copied — so
-re-importing a core is still "replace everything there but `root.c`", and the
-build lists it apart from the imported sources for the same reason.
+rather than imported. None of the trees they came from has a file by that name —
+their app glue is `preload.c`, `su_daemon.c` and an `.incbin` blob, none of which
+was copied — so re-importing a core is still "replace everything there but
+`root.c`", and the build lists it apart from the imported sources for the same
+reason.
 
-`core61` carries nine deltas against the tree it was taken from, all of them
-things that tree had never had to answer because every target it shipped was a
-Samsung one. Each is gated on a macro whose default is what upstream did, so a
-target that says nothing gets upstream's behaviour unchanged:
-
-- `slide.c` no longer assumes the kworker caller sits within 2 MiB of its link
-  address, and no longer uses that distance as the physmap correction as well.
-  `SLIDE_KASLR_MIN` / `SLIDE_KASLR_MAX` / `SLIDE_KASLR_ALIGN` bound and align
-  the accepted distance, and `SLIDE_P0_TRACKS_KASLR` says whether it is also
-  the correction. Where CONFIG_RANDOMIZE_BASE runs off a bootloader seed the
-  distance is gigabytes and 2 MiB aligned and it moves the image's virtual
-  mapping only, so the physmap alias of an image symbol does not follow it. The
-  bounds also do the work of telling a kworker blocked in a kernel *module*
-  apart from one blocked in `worker_thread`.
-- `fops.c` builds the reclaimed `rt_mutex_waiter` by member rather than by
-  fd-set word. The words it wrote were one kernel's layout — the one where
-  `tree` and `pi_tree` each carry their own prio and deadline — and a kernel
-  with the pre-split 0x58-byte waiter reads `task` and `lock` from somewhere
-  else entirely and walks into nothing. `SLIDE_PSELECT_WORD_SHIFT` places word
-  zero, already named in the porting notes, and the member offsets come from
-  the shape the target selected.
-- `fops.c` fills the fds those bits name with an empty epoll instance rather
-  than the write end of a pipe. Which of the three sets the waiter's words fall
-  in follows from its shape and that shift; a pipe write end is always
-  writable, so a waiter reaching the write set makes `pselect` return before
-  the punch lands, and a pipe read end reports `EPOLLHUP` — readable, to
-  `select` — once the loop overwrites the last writer's fd. An empty epoll
-  instance is ready for none of the three.
-- `util.c` asks `payload_mte_tagged()` rather than passing a hard-coded
-  `mte_enabled = 0`, which is the same delta `core612` carries and for the same
-  reason.
-- `util.c` canonicalises the fake-pointer base to the `0xff` top byte when MTE
-  is on. On a kernel running `KASAN_HW_TAGS` in synchronous mode a mistagged
-  kernel dereference is a hard fault, and the pointers the exploit stores for
-  the kernel to walk point into the reclaimed sk_buff page, whose tag is not
-  the one the leak matched. arm64's `TCR_EL1.TCMA1` exempts a kernel pointer
-  tagged `0xF` from checking — the match-all tag `kasan_reset_tag()` uses — so
-  tagging the intra-page pointers `0xF` stops the pi-chain walk faulting on the
-  mismatch. Gated on `payload_mte_tagged()`; the leak keeps the real tag.
-- `util.c`'s `is_direct_ptr()` strips the tag (`KPTR_UNTAG`, sign-extend bit 55)
-  before the linear-map range test. A pointer read out of the kernel — a
-  workqueue or worker-pool pointer in the umh route — carries its object's MTE
-  tag, so the raw value sits below `DIRECT_MAP_BASE` and the untagged test
-  rejected a valid pointer. Identity where MTE is off.
-- `pipe.c` untags at every linear-map/`struct page` conversion, and
-  `kernel_read_data()`/`kernel_write_data()` untag the address they are given.
-  The pfn arithmetic subtracts a base, so a tag in the top byte does not cancel
-  — it lands in the pfn, is multiplied by `STRUCT_PAGE_SIZE`, and the primitive
-  hands the kernel an address in neither range. Doing it in the primitive means
-  every caller addresses kernel memory through the `0xff`-topped match-all
-  alias rather than each one remembering. Identity where MTE is off.
-- `root.c` can drive the usermodehelper install through the ashmem-fops R/W the
-  CFI stage already proved, instead of the pipe-buffer primitive and its cache
-  gate (`CVE43499_CONFIGFS_ROOT`). It addresses every kernel pointer it reads or
-  writes through the `0xF` match-all alias, and it moves the reclaimed page's
-  umh work item onto that alias too, for the same synchronous-MTE reason the
-  fake-pointer base is canonicalised. **On a `CONFIG_HARDENED_USERCOPY` kernel
-  it is a diagnostic knob, not a fallback**: the configfs copy runs
-  `check_object_size()`, `kmalloc-*` objects are whitelisted whole but a
-  dedicated cache is not, and the install has to read `pool_workqueue` — which
-  has its own cache. On XIG07 that is a `kernel BUG at mm/usercopy.c`, so the
-  pipe route is mandatory there.
-- `util.c`'s `prepare_kernel_page` takes its reclaim ordering from the working
-  MT6897 6.1.138 reference rather than upstream's: it frees the target mm and
-  sprays the sk_buff with nothing in between, where upstream drains a second
-  set of cpu-partial slabs (32 close+kill) in that gap. On this SoC the
-  intervening allocator churn lets a slab allocator win the freed order-3 page
-  back first — the reclaim-miss panic shows it reused as an `rt_mutex` rbtree —
-  so the drain is moved to after the spray and the prepare set is filled with a
-  single interleaved clone+pin loop. This was the exploit's dominant failure
-  mode on this device, and the ordering settles it: measured on XIG07 the chain
-  now reaches arbitrary kernel R/W on the **first attempt**, three runs out of
-  three, on a warm device with dozens of crash-reboots behind it — the state the
-  earlier notes recorded as taking the rate to zero. The miss was the exploit's
-  own allocations between the free and the spray, not ambient buddy state.
-
-`core612` carries one delta against warhol-root, and only this one:
-
-- `util.c` includes `payload.h` and asks `payload_mte_tagged()` whether this
-  boot's kernel tags heap pointers, where upstream passes a hard-coded
-  `mte_enabled = 1` to `kernelsnitch_setup()`. Two hunks: that include and that
-  call. See [Kernel MTE](#kernel-mte) for why it cannot be a constant on
-  warhol.
-
-`core66` carries two deltas against pmg110-root, and only these two:
-
-- `offset.h` names the target header through `TARGET_HEADER` rather than
-  upstream's `TARGET_CONFIG_H`. The Makefile now defines both macros to the
-  same include, so this delta no longer buys anything and could be dropped to
-  make the tree exact.
-- `main.c` has lost `run_bootstrap()`, its `--bootstrap` argument and the
-  `extern int mini_adb_shell(const char *)` it called. Upstream defines that in
-  `miniadb.c`, which was never copied here — so the reference was dangling, and
-  it left `mini_adb_shell` **undefined in the shipped payload**. The
-  application loads the payload with `dlopen(RTLD_NOW)`, which resolves
-  everything up front, so pmg110's app payload could not load at all. The mode
-  itself is unreachable here: nothing in this repository or in the application
-  passes `--bootstrap`.
+Each core carries deltas against the tree it came from, and every one of them is
+gated on a macro whose default is what upstream did — so a target that names none
+of them gets upstream's behaviour unchanged. What each delta is and why it was
+needed is beside its gate in the source.
 
 Whichever core a target names, `readelf --dyn-syms` on the built
 `*-app.release.so` should report no undefined symbol outside `@LIBC`. Anything
