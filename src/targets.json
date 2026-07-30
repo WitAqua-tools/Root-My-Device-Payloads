@@ -45,7 +45,7 @@
       "sdk": 36,
       "abi": "arm64-v8a",
       "pageSize": 4096,
-      "status": "the LD_PRELOAD build roots this device end to end; the app payload the feed serves has not completed a run here -- until the dangling mini_adb_shell reference was removed from core66 it could not even be dlopen'd -- and kernelVersion / kernelBuildVersion are read out of boot.img rather than captured from the device"
+      "status": "the exploit chain is device-verified here through pmg110-root, the tree core66 was imported from; the payload this feed serves has not completed a run, and no build of it could have reported one until the root glue was wired up -- core66's run_exploit() reaches root in a forked child and then called a weak ENOSYS stub, so neither 'exploit completed' nor 'done=1 root=1' could ever be printed. kernelVersion / kernelBuildVersion are read out of boot.img rather than captured from the device"
     },
     {
       "profileId": "warhol-jp-OS3.0.304.0.WPSJPXM",

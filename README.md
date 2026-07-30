@@ -21,7 +21,7 @@ and published as a release asset — see [Feed delivery](#feed-delivery).
 
 | Target | Core | Device | SoC | Region | Firmware | Kernel | Fingerprint | Status |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `pmg110-cn-16.0.9.400` | `core66` | OPPO PMG110 / K15 Pro+ | MediaTek MT6991 | CN | `PMG110_16.0.9.400(CN01)` | `6.6.118-android15-8-g93e223c276e7-abogki500782043-4k` (`android15-6.6`, 4K pages) | `OPPO/PMG110/OP61E5L1:16/BP2A.250605.015/B.c24acd_188efc3_187038b:user/release-keys` | Exploit core device-verified through the non-app build; the feed entry ships, but the app payload has not completed a run here. |
+| `pmg110-cn-16.0.9.400` | `core66` | OPPO PMG110 / K15 Pro+ | MediaTek MT6991 | CN | `PMG110_16.0.9.400(CN01)` | `6.6.118-android15-8-g93e223c276e7-abogki500782043-4k` (`android15-6.6`, 4K pages) | `OPPO/PMG110/OP61E5L1:16/BP2A.250605.015/B.c24acd_188efc3_187038b:user/release-keys` | Exploit core device-verified through the tree it was imported from; the feed entry ships, but the payload built here has not completed a run, and until its root glue was wired up no build of it could have reported one. |
 | `warhol-jp-OS3.0.304.0.WPSJPXM` | `core612` | Xiaomi 17T Pro | MediaTek MT6993 | JP | `OS3.0.304.0.WPSJPXM` | `6.12.38-android16-5-g1d46253471dd-ab15048002-4k` (`android16-6.12`, 4K pages) | `Xiaomi/warhol_jp/warhol:16/BP2A.250605.031.A3/OS3.0.304.0.WPSJPXM:user/release-keys` | Working from the app, KernelSU `32525-2`. |
 | `xig07-jp-OS3.0.7.0.WNEJPKD` | `core61` | Xiaomi 14T (au XIG07) | MediaTek MT6897 | JP | `OS3.0.7.0.WNEJPKD` | `6.1.138-android14-11-g44bda9e8f6e9-ab13792638` (`android14-6.1`, 4K pages) | `Xiaomi/XIG07_jp_kdi/XIG07:16/BP2A.250605.031.A3/OS3.0.7.0.WNEJPKD:user/release-keys` | Working from the app, KernelSU `32525-2`; nothing has been served through the feed yet. |
 
@@ -45,9 +45,13 @@ core with different offsets — and each target names the one it needs in
 
 | Core | Kernel | From | Route to root |
 | --- | --- | --- | --- |
-| `core61` | `android14-6.1` | Root-My-Galaxy-Payloads' own `src/`, the tree this repository is a fork of | queues a `call_usermodehelper` work item to exec the helper, the same route `core66` takes |
-| `core66` | `android15-6.6` | pmg110-root | swaps a forked *child*'s cred, then queues a `call_usermodehelper` work item from the still-unprivileged parent to exec the helper |
+| `core61` | `android14-6.1` | Root-My-Galaxy-Payloads' own `src/`, the tree this repository is a fork of | reaches no root context in user space, so it queues a `call_usermodehelper` work item and the kernel execs the helper |
+| `core66` | `android15-6.6` | pmg110-root | swaps a forked *child*'s cred; that child is root and execs the helper itself |
 | `core612` | `android16-6.12` | warhol-root — upstream popsicle plus the kernel-MTE fix that device needs | swaps the exploit process's own cred and reloads the SELinux policy, then execs the helper directly |
+
+The last two arrive at the same place — root, SELinux permissive, helper not yet
+running — so what follows is one implementation, `root_helper.c`, and each of
+their `root.c` is the seam that calls it. `core61` links none of it.
 
 No core is this repository's own work and none is edited to resemble another, so
 a fix can be taken from upstream and no kernel's constants can leak into another
@@ -63,10 +67,19 @@ was copied — so re-importing a core is still "replace everything there but
 `root.c`", and the build lists it apart from the imported sources for the same
 reason.
 
-Each core carries deltas against the tree it came from, and every one of them is
-gated on a macro whose default is what upstream did — so a target that names none
-of them gets upstream's behaviour unchanged. What each delta is and why it was
-needed is beside its gate in the source.
+Each core carries deltas against the tree it came from. The ones that change
+what a run does are gated on a macro whose default is what upstream did — so a
+target that names none of them gets upstream's behaviour unchanged — and what
+each is and why it was needed sits beside its gate in the source.
+
+The rest are ungated because upstream's version names something this repository
+does not have. `core66` has all three of those: a bootstrap mode that called
+into a file that was never copied here, an include macro spelled the way
+`core612` spells it, and the check at the end of `run_exploit()` that upstream
+answers by running the `su` binary it unpacks from its own blob. The helper here
+is a separate artifact and promises a socket rather than a path, so the check
+asks the socket. A gate would not help: the default side of it would be a probe
+for a file no build of this repository produces.
 
 Whichever core a target names, `readelf --dyn-syms` on the built
 `*-app.release.so` should report no undefined symbol outside `@LIBC`. Anything
@@ -128,18 +141,23 @@ src/targets.json                      every target, and the only hand-authored f
 src/targets/<device>/<region>/<kernel release>/
                      target-<core>.h  offsets recovered from that exact firmware,
                                       for the core that reads them
-                     p0_fingerprint.h optional, and only core66 reads it
+                     p0_fingerprint.h optional, and only core61 reads it
                      kernelsu.json    the KernelSU build this target pairs with,
                                       and the patch sets that build takes
 src/payloads/<payload>/               one directory per exploit
                      core66/          the 6.6 core, from pmg110-root
-                       root.c         usermodehelper route to a resident root,
-                                      and this repository's, not the port's
+                       root.c         which of the two routes below this core
+                                      hands over on, and this repository's,
+                                      not the port's
                      core612/         the 6.12 core, from warhol-root
-                       root.c         direct-exec route to the same
+                       root.c         the same seam for that core
+                     root_helper.c    getting the helper resident from a context
+                                      that is already root, init hijack
+                                      included; linked into the cores that
+                                      reach one
                      mte.c            whether this boot's kernel tags heap pointers
-                     preload.c        the retry supervisor, shared by both
-                     payload.h        what those four agree on
+                     preload.c        the retry supervisor, shared by all
+                     payload.h        what those agree on
 src/payloads/su_daemon/               the bootstrap helper the app ships in its APK
                      su_daemon.c      the su daemon: protocol, uid check, exec
                      late_load.c      all it knows about KernelSU

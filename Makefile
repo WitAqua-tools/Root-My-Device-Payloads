@@ -65,18 +65,19 @@ APP_RELEASE_SIZE := 104128
 ROOT_HELPER := $(OUTDIR)/$(PAYLOAD_SLUG)-root
 
 # Both cores are imported trees kept as close to the port they came from as
-# they can be: core612 carries one delta against warhol-root and core66 two
+# they can be: core612 carries one delta against warhol-root and core66 three
 # against pmg110-root, all listed in the README. The one file under $(CORE_DIR)
 # that is *not* imported is root.c, which is this repository's own and is named
 # so that a core's code stays in that core's directory:
 #
 #   <core>/root.c  how that core gets the bootstrap helper resident as root.
-#                  core66 queues a usermodehelper work item from an
-#                  unprivileged process (install_android_root); core612 is
-#                  already root and execs it (install_embedded_su). One is
-#                  linked per build, and it is listed apart from CORE_SRCS
-#                  below so the build still says which side of the import each
-#                  file is on.
+#                  Both cores reach a root context of their own and install
+#                  from it (install_embedded_su -> root_helper.c); core66 also
+#                  carries the usermodehelper route (install_android_root) its
+#                  fops/pipe stage would need, which run_exploit() does not
+#                  reach. One is linked per build, and it is listed apart from
+#                  CORE_SRCS below so the build still says which side of the
+#                  import each file is on.
 #
 # Neither port has a file by that name -- their own app glue is preload.c,
 # su_daemon.c and an .incbin blob, none of which was copied -- so re-importing
@@ -89,6 +90,9 @@ ROOT_HELPER := $(OUTDIR)/$(PAYLOAD_SLUG)-root
 #                  it, because warhol's answer follows the flashed preloader
 #                  rather than the firmware its target header came from.
 #   preload.c      the retry supervisor, shared by both.
+#   root_helper.c  getting the helper resident from a context that is already
+#                  root, init hijack included. Linked only into the cores whose
+#                  glue calls it -- see ROOT_HELPER_CORES below.
 #
 # payload.h is the seam between them.
 CORE_SRCS := \
@@ -98,9 +102,18 @@ CORE_SRCS := \
   $(CORE_DIR)/fops.c \
   $(CORE_DIR)/pipe.c
 
+# Which cores reach a root context of their own and so install the helper from
+# user space. core61 does not: it has the kernel exec the helper through a
+# usermodehelper work item and calls none of root_helper.c, so linking it there
+# would carry an init hijack no run of that core can reach.
+ROOT_HELPER_CORES := core66 core612
+ROOT_HELPER_SRCS := \
+  $(if $(filter $(CORE),$(ROOT_HELPER_CORES)),$(PAYLOAD_DIR)/root_helper.c)
+
 PRELOAD_SRCS := \
   $(CORE_SRCS) \
   $(CORE_DIR)/root.c \
+  $(ROOT_HELPER_SRCS) \
   $(PAYLOAD_DIR)/mte.c \
   $(PAYLOAD_DIR)/preload.c
 
@@ -123,8 +136,14 @@ PAYLOAD_DEPS := $(TARGET_HEADER) $(PAYLOAD_DIR)/payload.h \
 # to the same include is what lets each core stay exactly as it was imported --
 # editing one to agree with the other is how a foreign kernel's constants got
 # into a core last time.
+#
+# TARGET_KERNEL_RELEASE is the last component of TARGET, which is the kernel
+# release the target is stored under. core66 refuses to run on a kernel other
+# than the one it was built for and needs the string to compare against; taking
+# it from the path means it cannot disagree with where the target lives.
 TARGET_HEADER_DEFINES := \
-  -DTARGET_HEADER='"$(TARGET_INCLUDE)"' -DTARGET_CONFIG_H='"$(TARGET_INCLUDE)"'
+  -DTARGET_HEADER='"$(TARGET_INCLUDE)"' -DTARGET_CONFIG_H='"$(TARGET_INCLUDE)"' \
+  -DTARGET_KERNEL_RELEASE='"$(notdir $(TARGET))"'
 
 COMMON_CFLAGS := \
   -O2 -g0 -Wall -Wextra \
