@@ -160,7 +160,14 @@
  *
  * and the bin address is what a run with it panicked at, to the byte:
  * configfs_bin_read_iter+0x3c faulting on 0x96, i.e. index 70 + the 0x50 that
- * is offsetof(struct configfs_dirent, s_frag). */
+ * is offsetof(struct configfs_dirent, s_frag).
+ *
+ * This is the one value here that a fresh extraction disagrees with, and the
+ * disagreement is the extractor's: pmg110-root's tools/extract_device.py maps
+ * this field to the symbol named configfs_bin_read_iter. Re-derive the rest of
+ * this header from the image freely -- all 57 struct offsets and the other 26
+ * symbols were checked against one on 2026-07-30 and agree -- but do not take
+ * this one from it. */
 #define CONFIGFS_READ_ITER_OFF      0x0049f8ecULL
 #define CONFIGFS_BIN_WRITE_ITER_OFF 0x0049fe18ULL
 #define COPY_SPLICE_READ_OFF   0x004235e0ULL
