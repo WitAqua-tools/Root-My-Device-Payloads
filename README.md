@@ -23,6 +23,7 @@ and published as a release asset — see [Feed delivery](#feed-delivery).
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `pmg110-cn-16.0.9.400` | `core66` | OPPO PMG110 / K15 Pro+ | MediaTek MT6991 | CN | `PMG110_16.0.9.400(CN01)` | `6.6.118-android15-8-g93e223c276e7-abogki500782043-4k` (`android15-6.6`, 4K pages) | `OPPO/PMG110/OP61E5L1:16/BP2A.250605.015/B.c24acd_188efc3_187038b:user/release-keys` | Exploit core device-verified through the non-app build; the feed entry ships, but the app payload has not completed a run here. |
 | `warhol-jp-OS3.0.304.0.WPSJPXM` | `core612` | Xiaomi 17T Pro | MediaTek MT6993 | JP | `OS3.0.304.0.WPSJPXM` | `6.12.38-android16-5-g1d46253471dd-ab15048002-4k` (`android16-6.12`, 4K pages) | `Xiaomi/warhol_jp/warhol:16/BP2A.250605.031.A3/OS3.0.304.0.WPSJPXM:user/release-keys` | Working from the app, KernelSU `32525-2`. |
+| `xig07-jp-OS3.0.7.0.WNEJPKD` | `core61` | Xiaomi 14T (au XIG07) | MediaTek MT6897 | JP | `OS3.0.7.0.WNEJPKD` | `6.1.138-android14-11-g44bda9e8f6e9-ab13792638` (`android14-6.1`, 4K pages) | `Xiaomi/XIG07_jp_kdi/XIG07:16/BP2A.250605.031.A3/OS3.0.7.0.WNEJPKD:user/release-keys` | Working from the app, KernelSU `32525-2`; nothing has been served through the feed yet. |
 
 The Samsung profiles this repository began with were removed along with their
 payloads, artifacts, KernelSU builds and feed entries.
@@ -44,44 +45,28 @@ core with different offsets — and each target names the one it needs in
 
 | Core | Kernel | From | Route to root |
 | --- | --- | --- | --- |
+| `core61` | `android14-6.1` | Root-My-Galaxy-Payloads' own `src/`, the tree this repository is a fork of | queues a `call_usermodehelper` work item to exec the helper, the same route `core66` takes |
 | `core66` | `android15-6.6` | pmg110-root | swaps a forked *child*'s cred, then queues a `call_usermodehelper` work item from the still-unprivileged parent to exec the helper |
 | `core612` | `android16-6.12` | warhol-root — upstream popsicle plus the kernel-MTE fix that device needs | swaps the exploit process's own cred and reloads the SELinux policy, then execs the helper directly |
 
-Neither core is this repository's own work and neither is edited to resemble
-the other, so a fix can be taken from upstream and no kernel's constants can
-leak into another kernel's tree. What is this repository's own is the glue
-around them — `<core>/root.c`, `mte.c`, `preload.c` and `payload.h`, described
-under [Layout](#layout).
+No core is this repository's own work and none is edited to resemble another, so
+a fix can be taken from upstream and no kernel's constants can leak into another
+kernel's tree. What is this repository's own is the glue around them —
+`<core>/root.c`, `mte.c`, `preload.c` and `payload.h`, described under
+[Layout](#layout).
 
 A core's own code stays in that core's directory, `root.c` included: it is the
 one file under `src/payloads/<payload>/<core>/` that this repository wrote
-rather than imported. Neither port has a file by that name — their app glue is
-`preload.c`, `su_daemon.c` and an `.incbin` blob, none of which was copied — so
-re-importing a core is still "replace everything there but `root.c`", and the
-build lists it apart from the imported sources for the same reason.
+rather than imported. None of the trees they came from has a file by that name —
+their app glue is `preload.c`, `su_daemon.c` and an `.incbin` blob, none of which
+was copied — so re-importing a core is still "replace everything there but
+`root.c`", and the build lists it apart from the imported sources for the same
+reason.
 
-`core612` carries one delta against warhol-root, and only this one:
-
-- `util.c` includes `payload.h` and asks `payload_mte_tagged()` whether this
-  boot's kernel tags heap pointers, where upstream passes a hard-coded
-  `mte_enabled = 1` to `kernelsnitch_setup()`. Two hunks: that include and that
-  call. See [Kernel MTE](#kernel-mte) for why it cannot be a constant on
-  warhol.
-
-`core66` carries two deltas against pmg110-root, and only these two:
-
-- `offset.h` names the target header through `TARGET_HEADER` rather than
-  upstream's `TARGET_CONFIG_H`. The Makefile now defines both macros to the
-  same include, so this delta no longer buys anything and could be dropped to
-  make the tree exact.
-- `main.c` has lost `run_bootstrap()`, its `--bootstrap` argument and the
-  `extern int mini_adb_shell(const char *)` it called. Upstream defines that in
-  `miniadb.c`, which was never copied here — so the reference was dangling, and
-  it left `mini_adb_shell` **undefined in the shipped payload**. The
-  application loads the payload with `dlopen(RTLD_NOW)`, which resolves
-  everything up front, so pmg110's app payload could not load at all. The mode
-  itself is unreachable here: nothing in this repository or in the application
-  passes `--bootstrap`.
+Each core carries deltas against the tree it came from, and every one of them is
+gated on a macro whose default is what upstream did — so a target that names none
+of them gets upstream's behaviour unchanged. What each delta is and why it was
+needed is beside its gate in the source.
 
 Whichever core a target names, `readelf --dyn-syms` on the built
 `*-app.release.so` should report no undefined symbol outside `@LIBC`. Anything
