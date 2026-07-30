@@ -368,7 +368,18 @@
  * passes its own copy down instead, through CVE43499_ROOT_HELPER, because the
  * APK's copy is at a path that is neither fixed nor writable from here. This
  * is the route run_exploit() takes: its credential write roots a forked child,
- * and that child execs the helper itself. */
+ * and that child execs the helper itself.
+ *
+ * From an application that child carries the app's seccomp filter, so
+ * root_helper.c has init exec the helper instead, over one service's argv. Its
+ * INIT_HIJACK_* defaults are what this device ships -- read out of the init.rc
+ * in system.img, not assumed from the static assert, which only says the
+ * defaults are self-consistent:
+ *
+ *     service snapuserd_proxy /system/bin/snapuserd -socket-handoff
+ *         oneshot / disabled / user root / seclabel u:r:snapuserd:s0
+ *
+ * A core66 device whose init.rc differs has to say so here. */
 #define ROOT_HELPER_PATH "/data/local/tmp/cve-2026-43499-root"
 
 /* usermodehelper root route -- taken from this repository's own profile,
