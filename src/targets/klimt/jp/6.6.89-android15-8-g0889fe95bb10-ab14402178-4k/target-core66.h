@@ -70,7 +70,11 @@
  * evidence about this build, so it is stated, not leaned on.
  *
  * arm64's linear-map randomisation never fires at VA_BITS=39, so memstart_addr
- * stays at the DRAM base and the physmap alias is KASLR-independent.
+ * stays at the DRAM base and the physmap alias is KASLR-independent. Checked
+ * on this image rather than assumed: tools/qemu_verify.py --mode linear boots
+ * it five times across KASLR seeds, RAM sizes and CPU models and memstart_addr
+ * is the DRAM base every time. That settles the *alias*; the load address
+ * itself is still the preloader's number above.
  *
  * To check it against a running device, or to override without a rebuild:
  *     adb shell su -c 'grep -i "Kernel code" /proc/iomem'
@@ -234,9 +238,15 @@
  * routes call libc select(), which on arm64 is the pselect6 syscall (arm64 has
  * no __NR_select), so pselect6 is the right chain for both.
  *
- * NOT QEMU-measured on this image yet -- pmg110's equivalent numbers were, and
- * its static computation agreed with the measurement, which is the only reason
- * the static result is being carried into a first run here.
+ * QEMU then measured the same thing on this image -- tools/qemu_verify.py
+ * --mode stack boots it under -M virt and breaks on both syscall entries from
+ * one task -- and agreed with the computation rather than merely being
+ * consistent with it:
+ *
+ *   entry SP core_sys_select       = 0xffffffc08000bd90  frame 0x1f0
+ *   entry SP futex_wait_requeue_pi = 0xffffffc08000bd50  frame 0x1c0
+ *   same kernel stack, measured entry-SP delta = -64
+ *   rt_waiter == stack_fds == 0xffffffc08000bc20  ->  waiter word 0
  *
  * fops.c's words[] is written for a waiter at word 2  -> shift = 0 - 2 = -2
  * slide.c's words[] indexes the waiter from word 0    -> shift = 0
