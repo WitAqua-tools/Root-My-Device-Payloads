@@ -137,6 +137,13 @@
 #define PERF_FIND_TASK_TAGGED 1
 #define PERF_FIND_TASK_ALIGN 64
 
+/* And the third: the reclaimed kernel page. The tag the leak carries belongs
+ * to the mm_struct slab that page used to be, and the page allocator tags it
+ * again on the way to being skb data, so every fake pointer built on it fails
+ * its check. Tag 0xf is match-all here -- __cpu_setup builds
+ * TCR_EL1 = 0x0450_0070_b559_3519, bit 58 = TCMA1. See prepare_kernel_page(). */
+#define PAGE_PTR_MATCH_ALL_TAG 1
+
 /* Collision threshold for KernelSnitch's timing side channel: a futex whose
  * hash-bucket walk takes more than this many times an empty bucket counts as
  * a collision. A property of the SoC's memory system, not of the kernel, and
