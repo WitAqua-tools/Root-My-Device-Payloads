@@ -115,32 +115,43 @@
  * possible CPUs and 2048. */
 #define FUTEX_HASHSIZE 2048
 
-/* Kernel heap pointers carry a tag in bits [59:56] when KASAN_HW_TAGS is
- * active, and the futex key hashes the whole mm pointer -- so an untagged
- * scan can never match. This kernel has CONFIG_KASAN_HW_TAGS=y and
- * CONFIG_ARM64_MTE=y compiled in, and unlike the other target here klimt
- * *boots* with them on: /proc/cmdline carries kasan.* options, AT_HWCAP2 has
- * HWCAP2_MTE, and an untagged sweep on this device fails the mm_struct leak
- * every time while a tagged one finds it on the first attempt. The pointers
- * it hands back carry the tag (fdffff80ce530000 for the payload page), which
- * is what a tagged kernel looks like.
+/* ------------------------------------------------------------ kernel MTE ---
+ * Kernel heap pointers carry a tag in bits [59:56] when KASAN_HW_TAGS is
+ * active. This kernel has CONFIG_KASAN_HW_TAGS=y and CONFIG_ARM64_MTE=y
+ * compiled in, and the unit this port was brought up on *boots* with them on:
+ * /proc/cmdline carries kasan.* options, AT_HWCAP2 has HWCAP2_MTE, and an
+ * untagged sweep fails the mm_struct leak every time while a tagged one finds
+ * it on the first attempt.
  *
- * core66's ks_mte_tagged() reads this macro directly -- mte.c's per-boot
- * detection is core612's and is not consulted here -- so this is the value
- * that decides it, and GHOSTLOCK_MTE=0/1 is the only override. */
-#define KS_MTE_TAGGED 1
+ * That is a fact about a boot, not about this firmware. A klimt can come up
+ * either way, so this header refuses to answer and mte.c answers per boot --
+ * KS_MTE_PER_BOOT, the same shape warhol's core612 header uses and for the
+ * same reason. Pinning it would be wrong in both directions: pinned to 0 on a
+ * tagging boot nothing is ever found, and pinned to 1 on a non-tagging boot
+ * the sweep tries 15 tags that cannot be there, which multiplies the chance a
+ * wrong (address, tag) pair satisfies the collision constraints -- and a wrong
+ * base is a wild write, not a retry. GHOSTLOCK_MTE=0/1 still forces it. */
+#define KS_MTE_PER_BOOT 1
 
-/* Same kernel, same consequence in the other place a kernel pointer is read:
- * the perf register vote that finds the child's task_struct. See the comment
- * on PERF_FIND_TASK_TAGGED in core66/main.c. /sys/kernel/slab/task_struct on
- * this device reports object_size 4800, order 3, align 64. */
+/* The other two places a kernel pointer is read or built are *not* per-boot,
+ * because each is correct either way rather than merely tolerable:
+ *
+ * The perf register vote that finds the child's task_struct. Upstream's filter
+ * compares raw values against PAGE_OFFSET and so discards a tagged `current`;
+ * this one untags first, keeps the tag, and bounds the result to the linear
+ * map and to the task_struct cache's alignment. On a kernel that tags nothing
+ * the untag is the identity and the two extra bounds still hold -- they reject
+ * the vmalloc stack addresses upstream let through, which is an improvement
+ * there too. /sys/kernel/slab/task_struct reports object_size 4800, order 3,
+ * align 64. See PERF_FIND_TASK_TAGGED in core66/main.c. */
 #define PERF_FIND_TASK_TAGGED 1
 #define PERF_FIND_TASK_ALIGN 64
 
-/* And the third: the reclaimed kernel page. The tag the leak carries belongs
- * to the mm_struct slab that page used to be, and the page allocator tags it
- * again on the way to being skb data, so every fake pointer built on it fails
- * its check. Tag 0xf is match-all here -- __cpu_setup builds
+/* And the reclaimed kernel page, whose base comes out of the leak carrying the
+ * mm_struct slab's tag -- stale by the time the page is skb data. Forcing tag
+ * 0xf fixes that where the kernel tags, and is a no-op where it does not: an
+ * untagged linear-map address already has 0xf in bits [59:56], so the OR
+ * changes nothing. 0xf is match-all here -- __cpu_setup builds
  * TCR_EL1 = 0x0450_0070_b559_3519, bit 58 = TCMA1. See prepare_kernel_page(). */
 #define PAGE_PTR_MATCH_ALL_TAG 1
 

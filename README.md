@@ -131,8 +131,17 @@ the command line leaves pointers untagged and this still answers "tagged",
 which costs the 16x sweep and still finds the object. Every uncertain case
 resolves that way on purpose.
 
-Only `core612` reads it. `core66`'s own knob predates this and stays as
-imported, and its one target pins the answer.
+`core66` reads it too, for a target that sets `KS_MTE_PER_BOOT`. Its own
+`KS_MTE_TAGGED` predates this and still decides for a target that pins one, so
+a device that cannot vary keeps saying so and pays nothing for the question.
+
+Which of the two a target wants is not a style choice. Pinned to `0` on a
+tagging boot the `mm_struct` leak matches nothing and the run fails, visibly
+and safely. Pinned to `1` on a non-tagging boot it does not fail safely: the
+sweep tries fifteen tags that cannot be there, which multiplies the chance a
+wrong `(address, tag)` pair satisfies the collision constraints, and a wrong
+base is a wild write rather than a retry. So a target pins only where the
+device cannot boot the other way.
 
 ## Layout
 
