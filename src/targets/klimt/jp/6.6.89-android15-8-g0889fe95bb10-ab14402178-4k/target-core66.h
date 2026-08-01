@@ -118,11 +118,24 @@
 /* Kernel heap pointers carry a tag in bits [59:56] when KASAN_HW_TAGS is
  * active, and the futex key hashes the whole mm pointer -- so an untagged
  * scan can never match. This kernel has CONFIG_KASAN_HW_TAGS=y and
- * CONFIG_ARM64_MTE=y compiled in, but on a production build it stays off
- * unless the bootloader passes kasan=on, so the default is untagged.
- * GHOSTLOCK_MTE=1 turns the tag search on without a rebuild, and mte.c
- * decides at run time regardless of what is set here. */
-#define KS_MTE_TAGGED 0
+ * CONFIG_ARM64_MTE=y compiled in, and unlike the other target here klimt
+ * *boots* with them on: /proc/cmdline carries kasan.* options, AT_HWCAP2 has
+ * HWCAP2_MTE, and an untagged sweep on this device fails the mm_struct leak
+ * every time while a tagged one finds it on the first attempt. The pointers
+ * it hands back carry the tag (fdffff80ce530000 for the payload page), which
+ * is what a tagged kernel looks like.
+ *
+ * core66's ks_mte_tagged() reads this macro directly -- mte.c's per-boot
+ * detection is core612's and is not consulted here -- so this is the value
+ * that decides it, and GHOSTLOCK_MTE=0/1 is the only override. */
+#define KS_MTE_TAGGED 1
+
+/* Same kernel, same consequence in the other place a kernel pointer is read:
+ * the perf register vote that finds the child's task_struct. See the comment
+ * on PERF_FIND_TASK_TAGGED in core66/main.c. /sys/kernel/slab/task_struct on
+ * this device reports object_size 4800, order 3, align 64. */
+#define PERF_FIND_TASK_TAGGED 1
+#define PERF_FIND_TASK_ALIGN 64
 
 /* Collision threshold for KernelSnitch's timing side channel: a futex whose
  * hash-bucket walk takes more than this many times an empty bucket counts as
