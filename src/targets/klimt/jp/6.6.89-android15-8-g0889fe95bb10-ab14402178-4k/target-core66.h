@@ -161,6 +161,13 @@
  * See check_selinux_off() in core66/main.c. */
 #define SELINUX_UNREADABLE_MEANS_ON 1
 
+/* MediaTek's MKP counts every file a task with a written cred opens and panics
+ * past a threshold, so the rooted task has a budget: the adb-shell route spends
+ * 2 and is silent after (it execs), the application route spent 4 doing the
+ * init hijack in place and died. Hand the hijack to a process execve gave a
+ * cred of its own. See ROOT_HELPER_INIT_SPAWN_VIA_EXEC in root_helper.c. */
+#define ROOT_HELPER_INIT_SPAWN_VIA_EXEC 1
+
 /* Collision threshold for KernelSnitch's timing side channel: a futex whose
  * hash-bucket walk takes more than this many times an empty bucket counts as
  * a collision. A property of the SoC's memory system, not of the kernel, and
