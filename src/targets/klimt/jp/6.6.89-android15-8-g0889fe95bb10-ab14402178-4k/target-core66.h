@@ -392,11 +392,16 @@
  * and that child execs the helper itself.
  *
  * From an application that child carries the app's seccomp filter, so
- * root_helper.c has init exec the helper instead, over one service's argv.
- * Its INIT_HIJACK_* defaults have NOT been checked against klimt's init.rc --
- * an adb-shell run does not reach that route, and this target has not been
- * taken past that stage. Read the service out of this build's system.img
- * before an app run is attempted. */
+ * root_helper.c has init exec the helper instead, over one service's argv. Its
+ * INIT_HIJACK_* defaults are what this device ships -- read off the device's
+ * own /system/etc/init/snapuserd.rc, not assumed from the static assert, which
+ * only says the defaults are self-consistent:
+ *
+ *     service snapuserd_proxy /system/bin/snapuserd -socket-handoff
+ *         oneshot / disabled / user root / seclabel u:r:snapuserd:s0
+ *
+ * so this target needs no INIT_HIJACK_* of its own. Nothing has exercised that
+ * route here -- an adb-shell run does not reach it. */
 #define ROOT_HELPER_PATH "/data/local/tmp/cve-2026-43499-root"
 
 /* usermodehelper root route -- only the fops/pipe route reaches it, which
