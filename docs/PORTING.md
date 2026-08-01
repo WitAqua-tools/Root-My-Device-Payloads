@@ -256,6 +256,29 @@ the bootstrap helper staged at the path the target header names. This exercises
 the exploit without the application's SELinux domain, allocator history, boot
 quiet window or attempt supervisor.
 
+Loading KernelSU from that route needs `ksud` at **two** paths, and by hand it
+is easy to stage only the first:
+
+```sh
+adb push ksud-<id> /data/local/tmp/ksud
+adb push ksud-<id> /data/local/tmp/.ksud-stage
+adb shell 'chmod 755 /data/local/tmp/ksud /data/local/tmp/.ksud-stage'
+adb shell '<helper> --late-load <kmi> <manager package> allow-shell'
+```
+
+`/data/local/tmp/ksud` is what the helper bind-mounts and execs;
+`/data/local/tmp/.ksud-stage` is what the staged late-load renames onto
+`/data/adb/ksud`, and it is consumed by that rename — so it is one copy per
+run, not one per device. Without the second, `ksud` stops at
+`Failed to stage ksud ... No such file or directory` *after* the policy has
+already been reloaded. The application makes both copies in one command, so
+this is a gap in the manual route only.
+
+Neither copy needs root: `/data/local/tmp` is writable by `shell`, and
+`stage_daemon_from` chowns the file to root after the rename. The run this was
+verified on made the second copy through the helper because it already had one;
+the two pushes above are the same thing without that.
+
 **The application route** second, which is what the feed serves. It is
 materially harder, and nothing about the first route proves it. The app refuses
 an install unless the exploit log contains both markers:
