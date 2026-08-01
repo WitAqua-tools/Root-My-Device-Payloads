@@ -155,6 +155,12 @@
  * TCR_EL1 = 0x0450_0070_b559_3519, bit 58 = TCMA1. See prepare_kernel_page(). */
 #define PAGE_PTR_MATCH_ALL_TAG 1
 
+/* An app cannot read /sys/fs/selinux/enforce, and upstream reads that as
+ * "already permissive" -- so the app route skipped Write 1, stayed enforcing,
+ * and lost perf_event_open to EACCES. Answer "not known to be off" instead.
+ * See check_selinux_off() in core66/main.c. */
+#define SELINUX_UNREADABLE_MEANS_ON 1
+
 /* Collision threshold for KernelSnitch's timing side channel: a futex whose
  * hash-bucket walk takes more than this many times an empty bucket counts as
  * a collision. A property of the SoC's memory system, not of the kernel, and
