@@ -140,6 +140,14 @@ as `root_stage.c`, so re-importing that core is "replace everything there but
   path as a compile-time constant, and a run that cannot write
   `/data/local/tmp` has no way to move it at run time.
 
+One piece of upstream behaviour is left in place rather than made a fourth
+delta: `run_exploit()` ends by forking and exec'ing `/data/local/tmp/su`, the
+interactive `su` that port unpacks from its own blob. This repository does not
+produce that file, so the exec fails and that child exits — the run is
+unaffected, because what an install is gated on is `payload_report_root()` from
+the root glue, not this. It is the last thing in the file the import replaces,
+so leaving it costs nothing and keeps the tree exact.
+
 Whichever core a target names, `readelf --dyn-syms` on the built
 `*-app.release.so` should report no undefined symbol outside `@LIBC`. Anything
 else is a call that will fail at `dlopen` on the device rather than in the
