@@ -39,6 +39,35 @@
 #define LOGCAT_PATH "/system/bin/logcat"
 
 /*
+ * ksud does not install itself from where it runs; it *renames* a file the
+ * caller is expected to have put here:
+ *
+ *     utils::stage_daemon_from("/data/local/tmp/.ksud-stage")
+ *         -> std::fs::rename(staged, "/data/adb/ksud")
+ *
+ * (Root-My-Device-KSU, patches/<version>/common/0001-ksud-staged-late-load.patch.
+ * It is a rename rather than a copy on purpose: the copy has to happen before
+ * loading the module changes this process's security context, and by the time
+ * ksud runs it is already too late to read its own image.)
+ *
+ * Nothing in this repository put that file there. The application does, right
+ * before it asks for a late-load, so the application route worked and the adb
+ * shell route could not: ksud stopped at "Failed to stage ksud ... No such
+ * file or directory", the module was never loaded, and no daemon stayed
+ * resident. Measured on Quest 3, which is the first target driven from a shell
+ * far enough to reach this.
+ *
+ * Staged here instead, so the two routes cannot disagree about it. Copied from
+ * KSUD_PATH rather than trusting whatever is already at the staged path,
+ * because KSUD_PATH is the file the bind mount below makes ksud, and the
+ * binary that installs itself has to be the binary that ran -- a leftover
+ * .ksud-stage from an earlier attempt with a different build would otherwise
+ * be what ends up at /data/adb/ksud. The application writes both from one
+ * source, so for that route this rewrites identical bytes.
+ */
+#define KSUD_STAGE_PATH "/data/local/tmp/.ksud-stage"
+
+/*
  * What this returns, and why the number is the part that matters.
  *
  * Everything below reports with dprintf to the caller's stdout and stderr,
@@ -69,6 +98,7 @@
 #define LATE_LOAD_STATUS_EXEC 12
 #define LATE_LOAD_STATUS_NO_DRIVER 13
 #define LATE_LOAD_STATUS_CONTROL 14
+#define LATE_LOAD_STATUS_STAGE 15
 #define LATE_LOAD_STATUS_USAGE 22
 #define LATE_LOAD_STATUS_KSUD 64
 #define LATE_LOAD_STATUS_KSUD_SPAN 64
@@ -229,6 +259,82 @@ struct ksu_get_info_cmd {
   uint32_t uapi_version;
 };
 
+/*
+ * Put KSUD_PATH where ksud's stage_daemon_from() expects to find it.
+ *
+ * O_TRUNC rather than unlink-and-create: the destination is renamed away by
+ * ksud on success, so the usual state is that it does not exist, and a run
+ * that failed after this point leaves one behind that must be replaced rather
+ * than reused. Written before the mount namespace is unshared -- the copy is
+ * about /data, which is shared, and doing it here keeps the namespace to the
+ * one thing it is for.
+ */
+static int stage_ksud(int report_fd) {
+  int in = open(KSUD_PATH, O_RDONLY | O_CLOEXEC);
+  if (in < 0) {
+    dprintf(report_fd, "late-load: %s: %s\n", KSUD_PATH, strerror(errno));
+    return LATE_LOAD_STATUS_STAGE;
+  }
+  int out = open(KSUD_STAGE_PATH, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC,
+                 0755);
+  if (out < 0) {
+    dprintf(report_fd, "late-load: %s: %s\n", KSUD_STAGE_PATH,
+            strerror(errno));
+    close(in);
+    return LATE_LOAD_STATUS_STAGE;
+  }
+
+  char buf[65536];
+  int status = LATE_LOAD_STATUS_OK;
+  for (;;) {
+    ssize_t got = read(in, buf, sizeof(buf));
+    if (got == 0) {
+      break;
+    }
+    if (got < 0) {
+      if (errno == EINTR) {
+        continue;
+      }
+      dprintf(report_fd, "late-load: staging read: %s\n", strerror(errno));
+      status = LATE_LOAD_STATUS_STAGE;
+      break;
+    }
+    ssize_t done = 0;
+    while (done < got) {
+      ssize_t wrote = write(out, buf + done, (size_t)(got - done));
+      if (wrote < 0 && errno == EINTR) {
+        continue;
+      }
+      if (wrote <= 0) {
+        dprintf(report_fd, "late-load: staging write: %s\n", strerror(errno));
+        status = LATE_LOAD_STATUS_STAGE;
+        break;
+      }
+      done += wrote;
+    }
+    if (status != LATE_LOAD_STATUS_OK) {
+      break;
+    }
+  }
+
+  /* ksud renames this into /data/adb and then runs it; the mode has to
+   * survive the rename, because nothing chmods it on the far side until
+   * finish_install(), which is after the module is loaded. */
+  if (status == LATE_LOAD_STATUS_OK && fchmod(out, 0755) != 0) {
+    dprintf(report_fd, "late-load: staging chmod: %s\n", strerror(errno));
+    status = LATE_LOAD_STATUS_STAGE;
+  }
+  if (close(out) != 0 && status == LATE_LOAD_STATUS_OK) {
+    dprintf(report_fd, "late-load: staging close: %s\n", strerror(errno));
+    status = LATE_LOAD_STATUS_STAGE;
+  }
+  close(in);
+  if (status != LATE_LOAD_STATUS_OK) {
+    unlink(KSUD_STAGE_PATH);
+  }
+  return status;
+}
+
 static int verify_kernelsu_control(void) {
   int fd = -1;
   syscall(SYS_reboot, 0xDEADBEEF, 0xCAFEBABE, 0, &fd);
@@ -301,6 +407,11 @@ int su_run_late_load(struct su_request *request, int conn) {
     /* Before the namespace, because it is about the whole system rather than
      * this mount tree, and before ksud, because ksud is what makes it matter. */
     reload_selinux_policy(STDERR_FILENO);
+
+    int staged = stage_ksud(STDERR_FILENO);
+    if (staged != LATE_LOAD_STATUS_OK) {
+      _exit(staged);
+    }
 
     if (unshare(CLONE_NEWNS) != 0 ||
         mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL) != 0) {
@@ -382,6 +493,10 @@ void su_late_load_report(int status, int fd) {
       break;
     case LATE_LOAD_STATUS_CONTROL:
       text = "KernelSU answered but reported itself incomplete";
+      break;
+    case LATE_LOAD_STATUS_STAGE:
+      text = "could not stage ksud for its own install -- is " KSUD_PATH
+             " there?";
       break;
     case LATE_LOAD_STATUS_USAGE:
       text = "usage: su --late-load <kmi> <package-name>";
