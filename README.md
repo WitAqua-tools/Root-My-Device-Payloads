@@ -80,7 +80,15 @@ that is the app's own storage, which it can write — and starts it through
 `/system/bin/linker`, which policy does let an app exec and which needs only to
 read the stage. A shell run still stages it in `/data/local/tmp` and execs it
 directly. The measurements behind that are in the port's own notes, not here.
-No application-launched run has reached root on this device yet.
+
+That is no longer what stops an application-launched run; the KASLR leak is. This
+core reads the kernel base out of `perf_event_open` callchains, and policy grants
+the `perf_event` class to `shell` and to profiling domains but not to
+`untrusted_app`, so an application run fails at the leak with `EACCES` and stops
+there — before it has written anything, and without rebooting the device.
+`core612` is the core here that does not need `perf_event_open`, so a leak that
+works from an application is a thing this repository already contains somewhere;
+it is not a thing `core510` can do yet. Runs from an adb shell are unaffected.
 
 One number this core needs is build-dependent and does not live in a target
 header: the `0x34` in `core510/exp32/stack.c`, where inside the 260-byte
