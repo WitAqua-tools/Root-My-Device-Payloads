@@ -39,21 +39,24 @@ port's own notes and are kept outside this repository;
 
 An entry in `src/targets.json` is what puts a target in the feed and in CI's
 build matrix, and it is a claim that the payload has been built and can be
-served to a device that matches. One target is carried without one:
+served to a device that matches. Two targets are carried without one, both for
+the same device:
 
 | Target | Core | Device | SoC | Firmware | Kernel |
 | --- | --- | --- | --- | --- | --- |
-| `quest3/global/5.10.240-gce8cca212ac5` | `core510` | Meta Quest 3 (`eureka`) | Qualcomm SXR2230P (`anorak`) | Horizon OS, incremental `52345320027600520`, `UP1A.231005.007.A1`, SDK 34 | `5.10.240-gce8cca212ac5` (Meta's own 5.10, 4K pages, `VA_BITS=39`) |
+| `quest3/global/5.10.240-g55be3759aea4` | `core510` | Meta Quest 3 (`eureka`) | Qualcomm SXR2230P (`anorak`) | Horizon OS, incremental `52345320035400520`, SDK 34 | `5.10.240-g55be3759aea4` (Meta's own 5.10, 4K pages, `VA_BITS=39`) |
+| `quest3/global/5.10.240-gce8cca212ac5` | `core510` | Meta Quest 3 (`eureka`) | Qualcomm SXR2230P (`anorak`) | Horizon OS, incremental `52345320027600520`, `UP1A.231005.007.A1`, SDK 34 | `5.10.240-gce8cca212ac5` (same kernel version, earlier build) |
 
-It builds — `make TARGET=quest3/global/5.10.240-gce8cca212ac5 CORE=core510` —
-and it is out of the feed for two reasons, both of which have to be answered
-before it goes in:
+The second is the earlier build, kept because it is a complete target and
+somebody may still be on it; no run has ever reached root on it, and the device
+this port was written against OTA'd off it mid-port. The first is the one that
+matters: a run of `core510` against it reached root from an adb shell, uid 0 in
+`u:r:kernel:s0` with SELinux left permissive.
 
-- **Nothing here has run on this device.** The offsets are recovered from this
-  build's own boot image and cross-checked twice over, and the core they feed
-  is a port whose author reports a working root on a different build of the
-  same device; neither of those is a run. Upstream also warns that a failed
-  attempt can hang the device until the power button is held.
+Both build — `make TARGET=quest3/global/5.10.240-g55be3759aea4 CORE=core510` —
+and both are out of the feed. One reason is now specific to this device rather
+than to the state of the port:
+
 - **A target directory must contain a `kernelsu.json`**, and this device has no
   KernelSU build to name: the kernel is Meta's own rather than a GKI branch, so
   there is no KMI a module could be built against. Carrying it out of
@@ -61,11 +64,19 @@ before it goes in:
   target can have no KernelSU build is the other one, and it would change what
   the app is told about every target.
 
-The application route has a third open end of its own, described in
+The other is that the root this reaches is not yet the one the feed serves. It
+is reached from an adb shell, it does not survive a reboot, and a missed
+reclaim panics the device rather than failing — measured on the build above,
+seven fires produced two roots and the rest rebooted. A target header's
+`PAYLOAD_ATTEMPT_BUDGET` is `1` for that reason: retrying belongs outside the
+process, across the reboot.
+
+The application route has an open end of its own, described in
 [`core510/root.c`](src/payloads/CVE-2026-43499/core510/root.c): this core execs
 a second, 32-bit binary partway through, and both the path it is staged at and
 the path it is exec'd from are inside `/data/local/tmp`, which an
-application-launched run cannot write.
+application-launched run cannot write. The root above was reached from an adb
+shell, which is the route that can.
 
 One number this core needs is build-dependent and does not live in a target
 header: the `0x34` in `core510/exp32/stack.c`, where inside the 260-byte
@@ -131,26 +142,71 @@ as `root_stage.c`, so re-importing that core is "replace everything there but
   itself is unreachable here: nothing in this repository or in the application
   passes `--bootstrap`.
 
-`core510` carries three deltas against IonStackQuest3, and only these three:
+`core510` carries deltas against IonStackQuest3, and they divide cleanly:
+one is this repository's shape, the rest are what it took to reach root on a
+real Quest 3. None is gated by a target, because there is no target for which
+upstream's behaviour is the wanted default.
 
-- `q3slide.c` returns `0` rather than `1` from every failure path of
-  `getkerneltextstart()`. Upstream's `1` is indistinguishable from a leaked
-  base of `0x1`, and the caller does not check: on a device where
-  `perf_event_open` is closed, the run would go on to aim its arbitrary write
-  at `0x1 + offset`.
-- `slide.c` gains `slide_base_plausible()`, which refuses a base that is not a
-  kernel VA, not 2 MiB aligned, or implausibly far from the link-time base, so
-  a failed leak stops before the write instead of after it. Neither of these
-  two is gated: there is no target for which upstream's behaviour is the
-  wanted default, and both were written while porting this core to the build
-  the `quest3` target describes.
+This repository's shape:
+
 - `common.h` guards `EXP32_LOCAL` with `#ifndef`, leaving upstream's value as
   the default, so a target header can name the path instead. `api.c` execs that
   path as a compile-time constant, and a run that cannot write
   `/data/local/tmp` has no way to move it at run time.
 
-One piece of upstream behaviour is left in place rather than made a fourth
-delta: `run_exploit()` ends by forking and exec'ing `/data/local/tmp/su`, the
+What the device required. Each of these was found by a run that failed, and
+the first two are why a run could not succeed at all:
+
+- `slide.c` gains `slide_base_plausible()`, which refuses a leaked base that is
+  not a kernel VA, not 2 MiB aligned, or outside the offset window this
+  kernel's KASLR can produce — `[BIT(36), BIT(36) + BIT(37))`, straight out of
+  `arch/arm64/kernel/kaslr.c`. The bound has to be that window and not a
+  round number: the minimum legal slide here is 64 GiB, so an earlier
+  "generous" ±16 GiB check rejected every valid leak. The run that reached root
+  had a slide of `0x2805400000`.
+- `q3slide.c` returns `0` rather than `1` from every failure path of
+  `getkerneltextstart()`. Upstream's `1` is indistinguishable from a leaked
+  base of `0x1`, and the caller does not check: on a device where
+  `perf_event_open` is closed, the run would go on to aim its arbitrary write
+  at `0x1 + offset`.
+- `fops.c` treats a fake fops table installed by an *earlier* round as a
+  success rather than a failure. The reclaim lands roughly two rounds in three,
+  so a later round can miss while an earlier round's hijack is still live and
+  working — which the read-back through that very pointer proves. Upstream
+  re-exploits instead, and every extra round is another roll of the reclaim
+  dice: a miss leaves `rt_mutex_adjust_prio_chain()` walking a page that is not
+  ours, which panics under `raw_spin_lock_irq` and reboots the device.
+  The same file skips re-deriving a KASLR base that is already known, because
+  the `ashmem_fops` cross-check it would use does not survive contact with the
+  device and would gate a chain on a value trusted less than the one it checks.
+- `util.c` warms the `kmalloc-4096` cache between the buddy drain and the
+  victim free (`skb_head_warm()`). Every order-2 frag allocation is preceded by
+  an `alloc_skb()` head, and with the drain holding ~34 order-3 slabs full,
+  those heads cut fresh slabs out of the just-freed victim block and take the
+  page the frag was meant to land on. Measured in QEMU: 8–23 of 40 freed pages
+  carved without it, 0 with it. Position matters — warming after the free eats
+  the victim pages itself.
+- `pipe.c` reads `kmalloc_caches` one slot at a time rather than in one call.
+  `configfs_read_once()` derives its file offset from the read length, so a
+  long read shifts the window along with it; the 8-byte form is the one proven
+  everywhere else in the port.
+- `util.c` and `main.c` gain `log_to_durable_file()`, and `exp32/main.c`
+  unbuffers its stdio. Both are for the failure mode rather than the success
+  one: a panic under `raw_spin_lock_irq` with `PANIC_TIMEOUT=-1` reboots
+  immediately, and a log still in the page cache is simply lost. `$IONSTACK_LOG`
+  opens the log `O_SYNC` so the last line before a reboot is the diagnostic.
+- `util.c` gains `kernel_image_dump()`, reached by setting `$IONSTACK_DUMP`,
+  which reads the running kernel's `.rodata` and `.data`/`.bss` back out
+  through the exploit's own read primitive and writes them to a file. This is
+  how the `5.10.240-g55be3759aea4` target exists at all: the device OTA'd to a
+  build the public firmware archive did not carry, and only `.rodata` had
+  moved, so the running kernel could be made to hand over its own image. Note
+  `CONFIG_HARDENED_USERCOPY=y` here — `.text` cannot be read by this primitive
+  through either the slid VA or the linear alias, and does not need to be,
+  since kallsyms lives in `.rodata`.
+
+One piece of upstream behaviour is left in place rather than made a delta:
+`run_exploit()` ends by forking and exec'ing `/data/local/tmp/su`, the
 interactive `su` that port unpacks from its own blob. This repository does not
 produce that file, so the exec fails and that child exits — the run is
 unaffected, because what an install is gated on is `payload_report_root()` from
@@ -316,7 +372,7 @@ make TARGET=warhol/jp/6.12.38-android16-5-g1d46253471dd-ab15048002-4k \
 ```
 
 ```sh
-make TARGET=quest3/global/5.10.240-gce8cca212ac5 \
+make TARGET=quest3/global/5.10.240-g55be3759aea4 \
   CORE=core510 ANDROID_NDK_HOME=/path/to/android-ndk
 ```
 
@@ -338,11 +394,29 @@ the compat one. A target header's `EXP32_STAGED_PATH` is where
 `core510/root.c` looks for it, and `EXP32_LOCAL` (its `common.h`, overridable
 from the target header) is where the core execs it from.
 
-`P0_KERNEL_PHYS_LOAD` is the one constant the quest3 target could not measure,
-and its header leaves it overridable rather than pretending otherwise:
+That stage has a build lever of its own, `EXP32_CFLAGS`, kept separate from
+`EXTRA_CFLAGS` so that what it carries cannot reach the 64-bit payload:
 
 ```sh
-make TARGET=quest3/global/5.10.240-gce8cca212ac5 CORE=core510 \
+make TARGET=quest3/global/5.10.240-g55be3759aea4 CORE=core510 \
+  EXP32_CFLAGS=-DDEBUG
+```
+
+`-DDEBUG` there turns on six one-shot `pr_debug` lines inside the 32-bit stage,
+and one of them sits immediately before the syscall that triggers the
+prio-chain walk — with `$IONSTACK_LOG` pointing at an `O_SYNC` file, that line
+is a synchronous write inside the race window, so it is not necessarily
+decoration. It is how the stage was built for the run that reached root, and
+the built artifact is byte-identical to the one that run used.
+
+`P0_KERNEL_PHYS_LOAD` is the one constant the quest3 target could not measure
+from an image, and its header leaves it overridable rather than pretending
+otherwise. It is no longer unconfirmed: the self-dump run cross-checked the
+physmap alias against the slid image VA at 48 points on that build and got
+47/47 agreement.
+
+```sh
+make TARGET=quest3/global/5.10.240-g55be3759aea4 CORE=core510 \
   EXTRA_CFLAGS=-DP0_KERNEL_PHYS_LOAD=0x8E780000ULL
 ```
 

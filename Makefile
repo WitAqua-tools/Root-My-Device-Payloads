@@ -192,9 +192,21 @@ $(OUTDIR):
 # an ELF32 ARM EXEC, which is what upstream ships too. Built with the core's
 # own flags rather than COMMON_CFLAGS -- it shares no header with the payload
 # but the kernelsnitch helpers, and it never sees the target header.
+#
+# EXP32_CFLAGS is a lever of its own rather than a share of EXTRA_CFLAGS,
+# because the one flag anybody needs here must NOT reach the 64-bit payload.
+# The run that reached root on quest3 was a -DDEBUG build of THIS stage only
+# (verified by hash: the stage's pr_debug sites are what put "consumer:
+# calling sched_setattr" in that run's log) against a payload built without
+# it. -DDEBUG turns on six one-shot pr_debug lines in the 32-bit stage, one
+# of which sits immediately before the syscall that triggers the prio-chain
+# walk -- with IONSTACK_LOG pointing at an O_SYNC file, that line is a
+# synchronous write inside the race window, so it is not obviously
+# decoration. Reproduce that build with EXP32_CFLAGS=-DDEBUG.
+EXP32_CFLAGS ?=
 $(EXP32): $(EXP32_SRCS) $(wildcard $(CORE_DIR)/kernelsnitch/*.h) | $(OUTDIR)
 	$(TARGET_CC32) -O2 -g0 -Wall -Wno-unused-parameter -Wno-unused-function \
-	  -I$(CORE_DIR) -fPIE -pie -static $(EXP32_SRCS) -o $@
+	  -I$(CORE_DIR) $(EXP32_CFLAGS) -fPIE -pie -static $(EXP32_SRCS) -o $@
 
 $(PRELOAD): $(PRELOAD_SRCS) $(PAYLOAD_DEPS) | $(OUTDIR)
 	$(TARGET_CC) -fPIC $(COMMON_CFLAGS) $(PRELOAD_SRCS) \
