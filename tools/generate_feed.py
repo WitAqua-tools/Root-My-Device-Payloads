@@ -183,6 +183,48 @@ def build_manager(build: dict) -> dict:
     return fields
 
 
+def patch_sets_dir(root: Path) -> Path | None:
+    """patches/<version> for the pinned KernelSU, or None if it cannot be read.
+
+    The build action derives the same directory the same way, so the sets a
+    build applies and the tree it applies them to cannot come apart.
+    """
+    version = kernelsu_version(root)
+    if version is None:
+        return None
+    return root / PATCHES_DIR / str(version)
+
+
+class Problems:
+    def __init__(self) -> None:
+        self.messages: list[str] = []
+
+    def add(self, message: str) -> None:
+        self.messages.append(message)
+        print(f"  {message}", file=sys.stderr)
+
+    def __bool__(self) -> bool:
+        return bool(self.messages)
+
+
+def target_path(targets_dir: Path, target: dict) -> Path:
+    return targets_dir / target["device"] / target["region"].lower() / target["kernelRelease"]
+
+
+def target_key(target: dict) -> str:
+    """The TARGET= value the Makefile takes, and the target's identity."""
+    return f"{target['device']}/{target['region'].lower()}/{target['kernelRelease']}"
+
+
+def target_header_name(target: dict) -> str:
+    """The header the Makefile reads for this target, which follows its core."""
+    return f"target-{target['core']}.h"
+
+
+def exploit_asset_name(target: dict) -> str:
+    return f"{target['payload'].lower()}-app-{target['profileId']}.so"
+
+
 def check_manager(label: str, build: dict, problems: Problems) -> None:
     override = build.get("manager")
     if override is None:
@@ -237,48 +279,6 @@ def check_manager_signature(label: str, build: dict, problems: Problems) -> None
         problems.add(f"{label}: managerSignature.size must look like 0x0524, got {size!r}")
     if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
         problems.add(f"{label}: managerSignature.hash must be a lowercase sha256, got {digest!r}")
-
-
-def patch_sets_dir(root: Path) -> Path | None:
-    """patches/<version> for the pinned KernelSU, or None if it cannot be read.
-
-    The build action derives the same directory the same way, so the sets a
-    build applies and the tree it applies them to cannot come apart.
-    """
-    version = kernelsu_version(root)
-    if version is None:
-        return None
-    return root / PATCHES_DIR / str(version)
-
-
-class Problems:
-    def __init__(self) -> None:
-        self.messages: list[str] = []
-
-    def add(self, message: str) -> None:
-        self.messages.append(message)
-        print(f"  {message}", file=sys.stderr)
-
-    def __bool__(self) -> bool:
-        return bool(self.messages)
-
-
-def target_path(targets_dir: Path, target: dict) -> Path:
-    return targets_dir / target["device"] / target["region"].lower() / target["kernelRelease"]
-
-
-def target_key(target: dict) -> str:
-    """The TARGET= value the Makefile takes, and the target's identity."""
-    return f"{target['device']}/{target['region'].lower()}/{target['kernelRelease']}"
-
-
-def target_header_name(target: dict) -> str:
-    """The header the Makefile reads for this target, which follows its core."""
-    return f"target-{target['core']}.h"
-
-
-def exploit_asset_name(target: dict) -> str:
-    return f"{target['payload'].lower()}-app-{target['profileId']}.so"
 
 
 def ksud_asset_name(build_id: str) -> str:
