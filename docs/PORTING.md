@@ -1,9 +1,10 @@
 # Adding a target
 
 What it takes to make one exact firmware build installable, in the order the
-questions actually come up. Written against the two ports this repository has
-done — pmg110 on `android15-6.6` and warhol on `android16-6.12` — and describing
-the layout as it is, not the one the Samsung profiles were written for.
+questions actually come up. Written against the ports this repository has done —
+pmg110 on `android15-6.6`, warhol on `android16-6.12` and xig07 on
+`android14-6.1` — and describing the layout as it is, not the one the Samsung
+profiles were written for.
 
 Per-target derivation records are **not kept here**. A target directory holds
 what the build reads and nothing else; where each number came from, what was
@@ -36,7 +37,8 @@ with different numbers.
 Read `uname -r`. If the GKI branch matches a core this repository already has,
 the port is a matter of offsets and you can skip to step 3. If it does not, the
 port needs a new core first, and that is a much larger piece of work: it is
-someone's exploit tree, not something derived from the firmware.
+someone's exploit tree, not something derived from the firmware. Which cores
+exist, and what each already answers, is [`CORES.md`](CORES.md).
 
 Importing a core, as `core612` was imported:
 
@@ -129,7 +131,9 @@ src/targets/<device>/<region lowercased>/<kernelRelease>/
 
 The directory path is derived from `device`, `region` and `kernelRelease` in
 `src/targets.json`, so it is never written down twice and the two cannot drift.
-The header's name follows `core` for the same reason.
+`region` is part of the path because the same model and kernel version ship as
+different builds per region. The header's name and the root glue the build links
+follow `core` for the same reason.
 
 Anything about how the payload is *deployed* rather than about the kernel goes
 below the generated block, with a comment: `ROOT_HELPER_PATH` (or core66's
@@ -266,8 +270,9 @@ adb shell run-as <app package> cat files/exploit.log \
 ```
 
 `exploit completed` is the supervisor's; `done=1 root=1` is
-`payload_report_root()`, called from inside the attempt because the supervisor is
-the parent and the attempt's result never crosses back to it. A payload that
+`payload_report_root()`, which every root glue calls and which has to be printed
+from inside the attempt, because the supervisor is the parent and nothing about
+the attempt's result crosses back to it. A payload that
 reaches root but does not print the second is an install the app will reject.
 
 ## 11. Say what is true
