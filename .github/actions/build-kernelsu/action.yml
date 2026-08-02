@@ -169,13 +169,12 @@ runs:
           echo "::error::the module has no __versions section"; exit 1
         fi
 
-        if [ -n '${{ inputs.manager-signature-hash }}' ]; then
-          strings -a "$ko" | grep -qx '${{ inputs.manager-signature-hash }}' || {
-            echo "::error::the module does not carry the manager certificate this target names"
-            exit 1
-          }
-          echo "manager signature present"
-        fi
+        # Not checked here: which certificates the module accepts as a
+        # manager. Kbuild folds EXPECTED_HASH into bytes at compile time, so
+        # the hex is not in the binary to look for -- confirmed against a
+        # module known to carry it. The producing build reads the pair back out
+        # of Kbuild's own output, and the digest above is what ties this file
+        # to that build.
 
     - name: Build the ${{ inputs.id }} kernel module
       if: inputs.prebuilt-module-url == ''
