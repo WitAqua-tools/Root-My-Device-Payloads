@@ -190,6 +190,13 @@ the first two are why a run could not succeed at all:
   `configfs_read_once()` derives its file offset from the read length, so a
   long read shifts the window along with it; the 8-byte form is the one proven
   everywhere else in the port.
+- `fops.c` also gains `probe_read_map()`, called unconditionally once the
+  hijack is live. It reads eight known symbols through both address forms —
+  the physmap alias and the slid image VA — and prints which form answers for
+  which section. Sixteen reads on the working path, kept rather than gated
+  because they are what says, in one glance at a log from a run that failed
+  later, whether the read primitive or the target header is the thing that is
+  wrong. They ran in the run that reached root.
 - `util.c` and `main.c` gain `log_to_durable_file()`, and `exp32/main.c`
   unbuffers its stdio. Both are for the failure mode rather than the success
   one: a panic under `raw_spin_lock_irq` with `PANIC_TIMEOUT=-1` reboots

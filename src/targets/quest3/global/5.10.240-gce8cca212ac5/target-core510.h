@@ -37,7 +37,12 @@
  *                        disassembly on this kernel.
  *
  * Nothing in this file has been checked against the device it describes: no
- * run of this payload has reached root on Quest 3. See src/targets.json.
+ * run of this payload has reached root on THIS build, and the device it was
+ * written for OTA'd off it mid-port. The successor build is reached by
+ * quest3/global/5.10.240-g55be3759aea4, which a run did reach root on -- the
+ * two share .text/.data/.bss and differ only in .rodata. This file is kept
+ * because someone may still be on this build, not because it is untested by
+ * accident. See src/targets.json.
  */
 #ifndef TARGET_QUEST3_5_10_240_CORE510_H
 #define TARGET_QUEST3_5_10_240_CORE510_H
