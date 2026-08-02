@@ -335,6 +335,53 @@ static int stage_ksud(int report_fd) {
   return status;
 }
 
+/*
+ * Make /proc/kallsyms answer, and put it back afterwards.
+ *
+ * ksud's late-load resolves the module's undefined symbols from
+ * /proc/kallsyms before init_module -- that is the whole reason the module is
+ * built with an empty Module.symvers and a zero-length __versions section.
+ * Under kernel.kptr_restrict = 2 every address in that file reads as
+ * 0000000000000000 *for root as well*: the 2 setting hides pointers from
+ * everyone, not just unprivileged readers. Measured on Quest 3, which ships
+ * that setting -- `head -2 /proc/kallsyms` as uid 0 in u:r:kernel:s0 returns
+ * zeros, and the same read with kptr_restrict set to 0 returns real addresses
+ * for the symbols the module needs (avc_has_perm, __set_fixmap, change_pid).
+ *
+ * A resolver that reads zeros does not fail loudly; it relocates to zero. So
+ * this is a precondition rather than a diagnostic, and it is restored once
+ * the loader has exited, because leaving kernel pointers readable is not this
+ * operation's to decide.
+ */
+#define KPTR_RESTRICT_PATH "/proc/sys/kernel/kptr_restrict"
+
+static int read_kptr_restrict(void) {
+  char value[16];
+  int fd = open(KPTR_RESTRICT_PATH, O_RDONLY | O_CLOEXEC);
+  if (fd < 0) {
+    return -1;
+  }
+  ssize_t got = read(fd, value, sizeof(value) - 1);
+  close(fd);
+  if (got <= 0) {
+    return -1;
+  }
+  value[got] = '\0';
+  return (int)strtol(value, NULL, 10);
+}
+
+static int write_kptr_restrict(int value) {
+  char text[16];
+  int len = snprintf(text, sizeof(text), "%d\n", value);
+  int fd = open(KPTR_RESTRICT_PATH, O_WRONLY | O_CLOEXEC);
+  if (fd < 0) {
+    return 0;
+  }
+  int ok = write(fd, text, (size_t)len) == len;
+  close(fd);
+  return ok;
+}
+
 static int verify_kernelsu_control(void) {
   int fd = -1;
   syscall(SYS_reboot, 0xDEADBEEF, 0xCAFEBABE, 0, &fd);
@@ -413,6 +460,14 @@ int su_run_late_load(struct su_request *request, int conn) {
       _exit(staged);
     }
 
+    int kptr_was = read_kptr_restrict();
+    if (kptr_was > 0) {
+      dprintf(STDERR_FILENO,
+              "late-load: kptr_restrict=%d hides every address in "
+              "/proc/kallsyms; setting 0 for the load%s\n",
+              kptr_was, write_kptr_restrict(0) ? "" : " -- FAILED");
+    }
+
     if (unshare(CLONE_NEWNS) != 0 ||
         mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL) != 0) {
       dprintf(STDERR_FILENO, "late-load: private mount namespace: %s\n",
@@ -442,6 +497,12 @@ int su_run_late_load(struct su_request *request, int conn) {
     }
 
     int loader_status = wait_status(loader);
+    /* The resolution happens before init_module, so by here it has either
+     * happened or the loader is gone. Either way this is the last moment the
+     * setting is ours to put back. */
+    if (kptr_was > 0) {
+      write_kptr_restrict(kptr_was);
+    }
     if (loader_status != 0) {
       /* Clamped, not truncated: the band has to stay a band. Which value
        * inside it is a hint only -- ksud's own reason for stopping is in the
