@@ -252,6 +252,29 @@ def check_manager(label: str, build: dict, problems: Problems) -> None:
         problems.add(f"{label}: kernelsu.json manager.required needs a reason")
 
 
+def check_prebuilt_module(label: str, build: dict, problems: Problems) -> None:
+    """A module built somewhere else, named by digest.
+
+    A DDK image is a stand-in for a device's kernel, and for some devices it is
+    not a good enough one -- close enough to build and link, not close enough to
+    load. Those targets have their module built from the device's own kernel
+    source in Root-My-Device-Kernel and name the result here. The digest is not
+    optional: it is the whole difference between referencing a build and
+    trusting a URL.
+    """
+    prebuilt = build.get("prebuiltModule")
+    if prebuilt is None:
+        return
+    if not isinstance(prebuilt, dict) or set(prebuilt) - {"url", "sha256", "$comment"}:
+        problems.add(f"{label}: kernelsu.json prebuiltModule must be an object of url and sha256")
+        return
+    url, digest = prebuilt.get("url"), prebuilt.get("sha256")
+    if not isinstance(url, str) or not url.startswith("https://"):
+        problems.add(f"{label}: prebuiltModule.url must be https, got {url!r}")
+    if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+        problems.add(f"{label}: prebuiltModule.sha256 must be a lowercase sha256, got {digest!r}")
+
+
 def check_manager_signature(label: str, build: dict, problems: Problems) -> None:
     """The certificate this build's module is told to accept as a manager.
 
@@ -392,6 +415,7 @@ def load_sources(root: Path, problems: Problems) -> list[dict]:
         check_patch_sets(root, label, target["_kernelsu"], problems)
         check_manager(label, target["_kernelsu"], problems)
         check_manager_signature(label, target["_kernelsu"], problems)
+        check_prebuilt_module(label, target["_kernelsu"], problems)
 
         # The app matches kernelRelease and kernelBuildVersion separately but
         # both are read off the same /proc/version line. If either is not

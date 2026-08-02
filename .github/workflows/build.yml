@@ -165,6 +165,8 @@ jobs:
           kernel-release: ${{ matrix.build.kernelRelease }}
           config: ${{ join(matrix.build.config, ' ') }}
           patch-sets: ${{ join(matrix.build.patchSets, ' ') }}
+          prebuilt-module-url: ${{ matrix.build.prebuiltModule.url }}
+          prebuilt-module-sha256: ${{ matrix.build.prebuiltModule.sha256 }}
           manager-signature-size: ${{ matrix.build.managerSignature.size }}
           manager-signature-hash: ${{ matrix.build.managerSignature.hash }}
           ndk-version: ${{ env.NDK_VERSION }}
@@ -204,6 +206,8 @@ jobs:
           kernel-release: ${{ matrix.build.kernelRelease }}
           config: ${{ join(matrix.build.config, ' ') }}
           patch-sets: ${{ join(matrix.build.patchSets, ' ') }}
+          prebuilt-module-url: ${{ matrix.build.prebuiltModule.url }}
+          prebuilt-module-sha256: ${{ matrix.build.prebuiltModule.sha256 }}
           manager-signature-size: ${{ matrix.build.managerSignature.size }}
           manager-signature-hash: ${{ matrix.build.managerSignature.hash }}
           ndk-version: ${{ env.NDK_VERSION }}

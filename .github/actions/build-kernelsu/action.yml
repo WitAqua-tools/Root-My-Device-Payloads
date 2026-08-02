@@ -28,6 +28,18 @@ inputs:
       version comes from the KernelSU pin and not from here; may be empty
     required: false
     default: ""
+  prebuilt-module-url:
+    description: >
+      A module built elsewhere to use instead of building one here. Set for a
+      target whose kernel a generic DDK image cannot stand in for -- the
+      module is built from the device's own kernel source in
+      Root-My-Device-Kernel and published there. Empty for everything else.
+    required: false
+    default: ""
+  prebuilt-module-sha256:
+    description: sha256 the downloaded module must have, required with the url
+    required: false
+    default: ""
   manager-signature-size:
     description: >
       DER size of a second certificate the module should accept as a manager,
@@ -128,7 +140,45 @@ runs:
         "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
           "ndk;${{ inputs.ndk-version }}" > /dev/null
 
+    # A module built from the device's own kernel source, verified rather than
+    # rebuilt. It lands where the DDK build would have left one, so everything
+    # downstream -- the ksud that embeds it, the artefact names -- is unchanged.
+    - name: Take the prebuilt ${{ inputs.id }} module
+      if: inputs.prebuilt-module-url != ''
+      shell: bash
+      env:
+        URL: ${{ inputs.prebuilt-module-url }}
+        WANT: ${{ inputs.prebuilt-module-sha256 }}
+      run: |
+        set -euo pipefail
+        test -n "$WANT" || { echo "::error::prebuilt-module-sha256 is required with the url"; exit 1; }
+        ko=src/kernelsu/KernelSU/kernel/kernelsu.ko
+        curl -fsSL "$URL" -o "$ko"
+        got=$(sha256sum "$ko" | cut -d' ' -f1)
+        echo "sha256 $got"
+        [ "$got" = "$WANT" ] || { echo "::error::the module is $got, not $WANT"; exit 1; }
+
+        # The same three things the DDK path proves about what it built. A
+        # prebuilt is not exempt from them just because someone else built it.
+        vermagic=$(strings -a "$ko" | sed -n 's/^vermagic=//p' | head -1)
+        expected='${{ inputs.kernel-release }} SMP preempt mod_unload modversions aarch64'
+        echo "vermagic: $vermagic"
+        [ "$vermagic" = "$expected" ] || { echo "::error::vermagic is '$vermagic', expected '$expected'"; exit 1; }
+
+        if ! readelf -SW "$ko" | grep -q '__versions .*PROGBITS'; then
+          echo "::error::the module has no __versions section"; exit 1
+        fi
+
+        if [ -n '${{ inputs.manager-signature-hash }}' ]; then
+          strings -a "$ko" | grep -qx '${{ inputs.manager-signature-hash }}' || {
+            echo "::error::the module does not carry the manager certificate this target names"
+            exit 1
+          }
+          echo "manager signature present"
+        fi
+
     - name: Build the ${{ inputs.id }} kernel module
+      if: inputs.prebuilt-module-url == ''
       shell: bash
       run: |
         set -o pipefail
