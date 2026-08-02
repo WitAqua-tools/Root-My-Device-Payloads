@@ -170,29 +170,6 @@ KernelSU's GPL terms rather than this repository's Apache-2.0 ones — see
 The firmware-to-target procedure is recorded in
 [`docs/PORTING.md`](docs/PORTING.md).
 
-## Continuous integration
-
-[`.github/workflows/build.yml`](.github/workflows/build.yml) is what produces
-every published artifact. It runs on push and pull request; only a push to
-`main` publishes a release.
-
-| Job | What it does |
-| --- | --- |
-| `discover` | validates `src/targets.json`, then emits the build matrices from it |
-| `exploit` | builds each target with the pinned NDK and asserts the fixed release payload size |
-| `kernelsu` | the builds a publishable target depends on: applies the patches to the pinned submodule, builds the module in its KMI's DDK image, then builds the `ksud` that embeds it |
-| `kernelsu-extra` | the same for builds nothing publishable needs, but unable to block a release |
-| `feed` | generates `targets-v2.json` from what was actually built and checks every URL is anchored to this run's tag |
-| `publish` | creates the release and uploads every asset |
-
-`discover` fails in seconds on a bad `src/targets.json`, rather than after a
-matrix of kernel builds — nothing it checks is derivable from a binary later on.
-
-The KernelSU jobs assert the two load-time contracts that otherwise fail on the
-device instead of in the build, and the one audit they cannot run is the one
-against a specific device's recovered kernel. Both are described in
-[`src/kernelsu/README.md`](src/kernelsu/README.md).
-
 ## Credits
 
 ### This repository
