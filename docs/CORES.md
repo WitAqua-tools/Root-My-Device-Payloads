@@ -5,49 +5,48 @@ to a **GKI branch** rather than to a SoC. A target on a different kernel series
 therefore takes a different exploit core — not the same core with different
 offsets — and each target names the one it needs in `src/targets.json`.
 
-| Core | Kernel | From | Route to root |
-| --- | --- | --- | --- |
-| `core61` | `android14-6.1` | Root-My-Galaxy-Payloads' own `src/`, the tree this repository is a fork of | reaches no root context in user space, so it queues a `call_usermodehelper` work item and the kernel execs the helper |
-| `core66` | `android15-6.6` | pmg110-root | swaps a forked *child*'s cred; that child is root and execs the helper itself |
-| `core612` | `android16-6.12` | warhol-root — upstream popsicle plus the kernel-MTE fix that device needs | swaps the exploit process's own cred and reloads the SELinux policy, then execs the helper directly |
+| Core | Kernel | Route to root |
+| --- | --- | --- |
+| `core61` | `android14-6.1` | reaches no root context in user space, so it queues a `call_usermodehelper` work item and the kernel execs the helper |
+| `core66` | `android15-6.6` | swaps a forked *child*'s cred; that child is root and execs the helper itself |
+| `core612` | `android16-6.12` | swaps the exploit process's own cred and reloads the SELinux policy, then execs the helper directly |
 
-Which project each of those trees is, with links, is in
+The published implementation each core was written against, with links, is in
 [Credits](../README.md#credits).
 
 The last two arrive at the same place — root, SELinux permissive, helper not yet
 running — so what follows is one implementation, `root_helper.c`, and each of
 their `root.c` is the seam that calls it. `core61` links none of it.
 
-## What is imported, and what is this repository's
+## What is a core's, and what is this repository's
 
 No core is this repository's own work and none is edited to resemble another, so
-a fix can be taken from upstream and no kernel's constants can leak into another
-kernel's tree. What is this repository's own is the glue around them —
-`<core>/root.c`, `mte.c`, `preload.c` and `payload.h`, described under
+a fix can be taken from the work it follows and no kernel's constants can leak
+into another kernel's tree. What is this repository's own is the glue around
+them — `<core>/root.c`, `mte.c`, `preload.c` and `payload.h`, described under
 [Layout](../README.md#layout).
 
 A core's own code stays in that core's directory, `root.c` included: it is the
 one file under `src/payloads/<payload>/<core>/` that this repository wrote
-rather than imported. None of the trees they came from has a file by that name —
-their app glue is `preload.c`, `su_daemon.c` and an `.incbin` blob, none of which
-was copied — so re-importing a core is still "replace everything there but
-`root.c`", and the build lists it apart from the imported sources for the same
-reason.
+itself. Where the work a core follows has a file by that name, there it is that
+exploit's own last stage rather than this seam, and the app glue it carries —
+`preload.c`, `su_daemon.c`, an `.incbin` blob — has no counterpart here at all.
+So bringing a core up to date is still "replace everything there but `root.c`",
+and the build lists it apart from the rest of the core for the same reason.
 
-## Deltas against the tree a core came from
+## Deltas against the work a core follows
 
-Each core carries deltas against the tree it came from. The ones that change
-what a run does are gated on a macro whose default is what upstream did — so a
-target that names none of them gets upstream's behaviour unchanged — and what
-each is and why it was needed sits beside its gate in the source.
+Each core carries deltas against the work it follows. The ones that change what
+a run does are gated on a macro whose default is what that work does — so a
+target that names none of them behaves the way its reference does — and what each
+is and why it was needed sits beside its gate in the source.
 
-The rest are ungated because upstream's version names something this repository
-does not have. `core66` has all three of those: a bootstrap mode that called
-into a file that was never copied here, an include macro spelled the way
-`core612` spells it, and the check at the end of `run_exploit()` that upstream
-answers by running the `su` binary it unpacks from its own blob. The helper here
-is a separate artifact and promises a socket rather than a path, so the check
-asks the socket. A gate would not help: the default side of it would be a probe
+The rest are ungated because the reference names something this repository does
+not have. `core66` has all three of those: a bootstrap mode reaching into a file
+that has no counterpart here, an include macro spelled the way `core612` spells
+it, and the check at the end of `run_exploit()`, which a reference answers with
+an embedded `su` binary where it fills that seam at all. The helper here is a separate artifact and promises a socket rather than a
+path, so the check asks the socket. A gate would not help: the default side of it would be a probe
 for a file no build of this repository produces.
 
 ## What to check after building
@@ -60,10 +59,10 @@ build. The full post-build check list is
 
 ## Adding a core
 
-A new core is added by dropping the tree in as `src/payloads/<payload>/<core>/`,
-writing the `root.c` beside it that fills its root seam, and naming it from a
-target. Nothing in the Makefile or the workflow has to learn about it. What to
-copy, what not to edit, and what `root.c` has to answer are
+A new core is added as `src/payloads/<payload>/<core>/`, with the `root.c` beside
+it that fills its root seam, and named from a target. Nothing in the Makefile or
+the workflow has to learn about it. What each file is for, what not to edit, and
+what `root.c` has to answer are
 [`PORTING.md`](PORTING.md) step 1.
 
 ## Kernel MTE
@@ -96,5 +95,5 @@ the command line leaves pointers untagged and this still answers "tagged",
 which costs the 16x sweep and still finds the object. Every uncertain case
 resolves that way on purpose.
 
-Only `core612` reads it. `core66`'s own knob predates this and stays as
-imported, and its one target pins the answer.
+Only `core612` reads it. `core66`'s own knob predates this and stays as it is,
+and its one target pins the answer.

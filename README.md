@@ -23,12 +23,9 @@ Use only on devices you own or are explicitly authorized to test.
 
 | Target | Core | Device | SoC | Region | Firmware | Kernel | Fingerprint | Status |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `pmg110-cn-16.0.9.400` | `core66` | OPPO PMG110 / K15 Pro+ | MediaTek MT6991 | CN | `PMG110_16.0.9.400(CN01)` | `6.6.118-android15-8-g93e223c276e7-abogki500782043-4k` (`android15-6.6`, 4K pages) | `OPPO/PMG110/OP61E5L1:16/BP2A.250605.015/B.c24acd_188efc3_187038b:user/release-keys` | Exploit core device-verified through the tree it was imported from; the feed entry ships, but the payload built here has not completed a run, and until its root glue was wired up no build of it could have reported one. |
+| `pmg110-cn-16.0.9.400` | `core66` | OPPO PMG110 / K15 Pro+ | MediaTek MT6991 | CN | `PMG110_16.0.9.400(CN01)` | `6.6.118-android15-8-g93e223c276e7-abogki500782043-4k` (`android15-6.6`, 4K pages) | `OPPO/PMG110/OP61E5L1:16/BP2A.250605.015/B.c24acd_188efc3_187038b:user/release-keys` | Exploit core device-verified on this firmware outside this repository; the feed entry ships, but the payload built here has not completed a run, and until its root glue was wired up no build of it could have reported one. |
 | `warhol-jp-OS3.0.304.0.WPSJPXM` | `core612` | Xiaomi 17T Pro | MediaTek MT6993 | JP | `OS3.0.304.0.WPSJPXM` | `6.12.38-android16-5-g1d46253471dd-ab15048002-4k` (`android16-6.12`, 4K pages) | `Xiaomi/warhol_jp/warhol:16/BP2A.250605.031.A3/OS3.0.304.0.WPSJPXM:user/release-keys` | Working from the app, KernelSU `32525-2`. |
 | `xig07-jp-OS3.0.7.0.WNEJPKD` | `core61` | Xiaomi 14T (au XIG07) | MediaTek MT6897 | JP | `OS3.0.7.0.WNEJPKD` | `6.1.138-android14-11-g44bda9e8f6e9-ab13792638` (`android14-6.1`, 4K pages) | `Xiaomi/XIG07_jp_kdi/XIG07:16/BP2A.250605.031.A3/OS3.0.7.0.WNEJPKD:user/release-keys` | Working from the app, KernelSU `32525-2`; nothing has been served through the feed yet. |
-
-The Samsung profiles this repository began with were removed along with their
-payloads, artifacts, KernelSU builds and feed entries.
 
 Targets are exact-firmware targets. A matching model with a different build is
 not equivalent and must be ported separately. Which fields a device is matched
@@ -46,17 +43,18 @@ different kernel series therefore takes a different exploit core — not the sam
 core with different offsets — and each target names the one it needs in
 `src/targets.json`:
 
-| Core | Kernel | From |
-| --- | --- | --- |
-| `core61` | `android14-6.1` | Root-My-Galaxy-Payloads' own `src/`, the tree this repository is a fork of |
-| `core66` | `android15-6.6` | pmg110-root |
-| `core612` | `android16-6.12` | warhol-root |
+| Core | Kernel |
+| --- | --- |
+| `core61` | `android14-6.1` |
+| `core66` | `android15-6.6` |
+| `core612` | `android16-6.12` |
 
-What each core is, how it reaches root, what it carries against the tree it came
-from, how a boot's kernel-MTE answer is decided, and how to add a core are in
-[`docs/CORES.md`](docs/CORES.md). No core is this repository's own work; which
-project each tree above is, with links, is in [Credits](#credits). What *is* this
-repository's own is the glue around them, in [Layout](#layout).
+What each core is, how it reaches root, what it carries against the work it
+follows, how a boot's kernel-MTE answer is decided, and how to add a core are in
+[`docs/CORES.md`](docs/CORES.md). No core is this repository's own work; the
+published implementation each one was written against, with links, is in
+[Credits](#credits). What *is* this repository's own is the glue around them, in
+[Layout](#layout).
 
 ## Layout
 
@@ -69,11 +67,10 @@ src/targets/<device>/<region>/<kernel release>/
                      kernelsu.json    the KernelSU build this target pairs with,
                                       and the patch sets that build takes
 src/payloads/<payload>/               one directory per exploit
-                     core66/          the 6.6 core, from pmg110-root
+                     core66/          the 6.6 core
                        root.c         which of the two routes below this core
-                                      hands over on, and this repository's,
-                                      not the port's
-                     core612/         the 6.12 core, from warhol-root
+                                      hands over on, and this repository's own
+                     core612/         the 6.12 core
                        root.c         the same seam for that core
                      root_helper.c    getting the helper resident from a context
                                       that is already root, init hijack
@@ -202,8 +199,7 @@ against a specific device's recovered kernel. Both are described in
 
 A fork of [BuSung-dev/Root-My-Galaxy-Payloads](https://github.com/BuSung-dev/Root-My-Galaxy-Payloads),
 the work of [BuSung-dev](https://github.com/BuSung-dev), keeping its Apache
-License 2.0 — see [LICENSE](LICENSE). The Samsung profiles that tree was written
-for are gone from here; `core61` is its `src/`, imported as a core.
+License 2.0 — see [LICENSE](LICENSE).
 
 ### The exploit
 
@@ -211,15 +207,14 @@ The published source this repository's payload was originally based on is
 IonStack, in
 [NebuSec/CyberMeowfia](https://github.com/NebuSec/CyberMeowfia/tree/main/IonStack/CVE-2026-43499/exploit).
 
-No exploit core here is this repository's own work; each is imported from a port
-of that exploit, and the one file this repository writes in a core's directory is
-`root.c`:
+No exploit core here is this repository's own work. Each was written with a
+published implementation of that exploit as its reference:
 
-| Core | Imported from | Which is |
-| --- | --- | --- |
-| `core61` | [BuSung-dev/Root-My-Galaxy-Payloads](https://github.com/BuSung-dev/Root-My-Galaxy-Payloads) | that tree's own `src/`, imported as a core |
-| `core66` | [pmg110-root](https://github.com/soralis0912/CVE-2026-43499-pmg110-root) | whose own exploit core is a GhostLock 6.6 tree |
-| `core612` | [warhol-root](https://github.com/soralis0912/CVE-2026-43499-warhol-root) | [x-spy/CVE-2026-43499-popsicle](https://github.com/x-spy/CVE-2026-43499-popsicle) plus the kernel-MTE fix that device needs |
+| Core | Reference |
+| --- | --- |
+| `core61` | [BuSung-dev/Root-My-Galaxy-Payloads](https://github.com/BuSung-dev/Root-My-Galaxy-Payloads) |
+| `core66` | [JoinChang/ghostlock-oneplus](https://github.com/JoinChang/ghostlock-oneplus) |
+| `core612` | [x-spy/CVE-2026-43499-popsicle](https://github.com/x-spy/CVE-2026-43499-popsicle) |
 
 The `kernelsnitch/` directory under each core is the software-only timing side
 channel published as
