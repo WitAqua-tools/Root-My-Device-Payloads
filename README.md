@@ -67,6 +67,15 @@ a second, 32-bit binary partway through, and both the path it is staged at and
 the path it is exec'd from are inside `/data/local/tmp`, which an
 application-launched run cannot write.
 
+One number this core needs is build-dependent and does not live in a target
+header: the `0x34` in `core510/exp32/stack.c`, where inside the 260-byte
+`setsockopt` payload the fake waiter has to sit for it to land on the real
+one's stack slot. It is a compiler's frame layout rather than anything in the
+image's symbols or BTF, and it was measured live for this build — the kernel
+booted under QEMU with a 32-bit process making the two calls, `&greqs` read out
+of `ip6_mc_source`'s argument and the waiter slot out of the futex frame's SP.
+A second 5.10 target has to re-measure it rather than inherit it from here.
+
 ## Cores
 
 This attack chain is fixed to a **GKI branch**, not to a SoC. A target on a
