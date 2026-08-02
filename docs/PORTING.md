@@ -1,9 +1,9 @@
 # Adding a target
 
 What it takes to make one exact firmware build installable, in the order the
-questions actually come up. Written against the two ports this repository has
-done — pmg110 on `android15-6.6` and warhol on `android16-6.12` — and describing
-the layout as it is, not the one the Samsung profiles were written for.
+questions actually come up. Written against the ports this repository has done —
+pmg110 on `android15-6.6`, warhol on `android16-6.12` and xig07 on
+`android14-6.1` — and describing the layout as it is.
 
 Per-target derivation records are **not kept here**. A target directory holds
 what the build reads and nothing else; where each number came from, what was
@@ -36,19 +36,22 @@ with different numbers.
 Read `uname -r`. If the GKI branch matches a core this repository already has,
 the port is a matter of offsets and you can skip to step 3. If it does not, the
 port needs a new core first, and that is a much larger piece of work: it is
-someone's exploit tree, not something derived from the firmware.
+someone's exploit tree, not something derived from the firmware. Which cores
+exist, and what each already answers, is [`CORES.md`](CORES.md).
 
-Importing a core, as `core612` was imported:
+Bringing in a new core, as `core612` was:
 
-1. Take it from a checkout you have verified is clean. `git status` and
-   `git diff --stat` first, then extract with `git archive HEAD` and compare —
-   an uncommitted local experiment copied in as though it were the port is a
-   failure mode that has already happened once, and it is invisible afterwards.
-2. Copy only the exploit tree. The port's own `preload.c`, `su_daemon.c` and any
-   `.incbin` blob are its app glue; this repository has its own. The core
+1. Work from a checkout of its reference that you have verified is clean.
+   `git status` and `git diff --stat` first, then extract with `git archive HEAD`
+   and compare — an uncommitted local experiment taken in as though it were the
+   published work is a failure mode that has already happened once, and it is
+   invisible afterwards.
+2. Take only the exploit tree. The reference's own `preload.c`, `su_daemon.c` and
+   any `.incbin` blob are its app glue; this repository has its own. The core
    directory ends up holding exactly one file this repository wrote, `root.c`
-   below, so re-importing later is "replace everything here but `root.c`" --
-   check first that the port has not since grown a file by that name.
+   below, so bringing it up to date later is "replace everything here but
+   `root.c`" -- check first that the reference has not since grown a file by that
+   name.
 3. Do not edit it to resemble the core already here — not the naming, and
    especially not the constants each spells differently. Where the two disagree
    about something the build has to reconcile, reconcile it in the Makefile.
@@ -85,10 +88,9 @@ so it is worth doing carefully even when the answer is already known.
 
 ## 3. Recover the offsets
 
-The generator belongs to the port that produced the core, not to this
-repository. Run it there and copy its output in verbatim, between markers, with
-a comment saying what produced it. Never hand-edit a number inside that block —
-regenerate.
+The generator belongs with the core's reference, not with this repository. Run it
+there and copy its output in verbatim, between markers, with a comment saying
+what produced it. Never hand-edit a number inside that block — regenerate.
 
 Two things the MediaTek ports had to learn, both likely to recur:
 
@@ -129,7 +131,9 @@ src/targets/<device>/<region lowercased>/<kernelRelease>/
 
 The directory path is derived from `device`, `region` and `kernelRelease` in
 `src/targets.json`, so it is never written down twice and the two cannot drift.
-The header's name follows `core` for the same reason.
+`region` is part of the path because the same model and kernel version ship as
+different builds per region. The header's name and the root glue the build links
+follow `core` for the same reason.
 
 Anything about how the payload is *deployed* rather than about the kernel goes
 below the generated block, with a comment: `ROOT_HELPER_PATH` (or core66's
@@ -266,8 +270,9 @@ adb shell run-as <app package> cat files/exploit.log \
 ```
 
 `exploit completed` is the supervisor's; `done=1 root=1` is
-`payload_report_root()`, called from inside the attempt because the supervisor is
-the parent and the attempt's result never crosses back to it. A payload that
+`payload_report_root()`, which every root glue calls and which has to be printed
+from inside the attempt, because the supervisor is the parent and nothing about
+the attempt's result crosses back to it. A payload that
 reaches root but does not print the second is an install the app will reject.
 
 ## 11. Say what is true

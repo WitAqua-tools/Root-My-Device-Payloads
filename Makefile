@@ -92,7 +92,7 @@ endif
 endif
 
 # Every core is an imported tree kept as close to the port it came from as it
-# can be: core612 carries one delta against warhol-root, core66 two against
+# can be: core612 carries one delta against warhol-root, core66 three against
 # pmg110-root and core510 three against IonStackQuest3, all listed in the
 # README. What under $(CORE_DIR) is *not* imported is root.c -- and, for
 # core510 alone, the exp32_blob.S that carries its 32-bit stage inside the
@@ -100,13 +100,14 @@ endif
 # stays in that core's directory:
 #
 #   <core>/root.c  how that core gets the bootstrap helper resident as root.
-#                  core66 queues a usermodehelper work item from an
+#                  core66 and core61 queue a usermodehelper work item from an
 #                  unprivileged process (install_android_root); core612 is
-#                  already root and execs it (install_embedded_su); core510
-#                  roots a forked child that has had its seccomp filter cleared
-#                  as well, and that child execs it. One is linked per build,
-#                  and it is listed apart from CORE_SRCS below so the build
-#                  still says which side of the import each file is on.
+#                  already root and execs it (install_embedded_su -> the shared
+#                  root_helper.c); core510 roots a forked child that has had
+#                  its seccomp filter cleared as well, and that child execs it
+#                  from an install_embedded_su of its own. One is linked per
+#                  build, and it is listed apart from CORE_SRCS below so the
+#                  build still says which side of the import each file is on.
 #
 # No port has a file by that name -- their own app glue is preload.c,
 # su_daemon.c and an .incbin blob, none of which was copied -- so re-importing
@@ -119,6 +120,9 @@ endif
 #                  it, because warhol's answer follows the flashed preloader
 #                  rather than the firmware its target header came from.
 #   preload.c      the retry supervisor, shared by all.
+#   root_helper.c  getting the helper resident from a context that is already
+#                  root, init hijack included. Linked only into the cores whose
+#                  glue calls it -- see ROOT_HELPER_CORES below.
 #
 # payload.h is the seam between them.
 CORE_SRCS := \
@@ -140,10 +144,21 @@ CORE_SRCS += $(if $(filter $(CORE),core510),\
   $(CORE_DIR)/q3slide.c \
   $(CORE_DIR)/root_stage.c)
 
+# Which cores reach a root context of their own and so install the helper from
+# user space. core61 does not: it has the kernel exec the helper through a
+# usermodehelper work item and calls none of root_helper.c, so linking it there
+# would carry an init hijack no run of that core can reach.
+# core510 does not either: its root.c carries an install_embedded_su of its
+# own, so linking the shared one would define the symbol twice.
+ROOT_HELPER_CORES := core66 core612
+ROOT_HELPER_SRCS := \
+  $(if $(filter $(CORE),$(ROOT_HELPER_CORES)),$(PAYLOAD_DIR)/root_helper.c)
+
 PRELOAD_SRCS := \
   $(CORE_SRCS) \
   $(CORE_DIR)/root.c \
   $(EXP32_BLOB_SRC) \
+  $(ROOT_HELPER_SRCS) \
   $(PAYLOAD_DIR)/mte.c \
   $(PAYLOAD_DIR)/preload.c
 
@@ -168,8 +183,14 @@ PAYLOAD_DEPS := $(TARGET_HEADER) $(PAYLOAD_DIR)/payload.h \
 # to the same include is what lets each core stay exactly as it was imported --
 # editing one to agree with the other is how a foreign kernel's constants got
 # into a core last time.
+#
+# TARGET_KERNEL_RELEASE is the last component of TARGET, which is the kernel
+# release the target is stored under. core66 refuses to run on a kernel other
+# than the one it was built for and needs the string to compare against; taking
+# it from the path means it cannot disagree with where the target lives.
 TARGET_HEADER_DEFINES := \
-  -DTARGET_HEADER='"$(TARGET_INCLUDE)"' -DTARGET_CONFIG_H='"$(TARGET_INCLUDE)"'
+  -DTARGET_HEADER='"$(TARGET_INCLUDE)"' -DTARGET_CONFIG_H='"$(TARGET_INCLUDE)"' \
+  -DTARGET_KERNEL_RELEASE='"$(notdir $(TARGET))"'
 
 # EXTRA_CFLAGS is for the constants a target header deliberately leaves
 # overridable -- quest3's P0_KERNEL_PHYS_LOAD is one, and it is the only way to

