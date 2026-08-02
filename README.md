@@ -35,6 +35,38 @@ number came from, what was ruled out, and what is still unverified are that
 port's own notes and are kept outside this repository;
 [`docs/PORTING.md`](docs/PORTING.md) is the part that generalises.
 
+### Carried, but not in the feed
+
+An entry in `src/targets.json` is what puts a target in the feed and in CI's
+build matrix, and it is a claim that the payload has been built and can be
+served to a device that matches. One target is carried without one:
+
+| Target | Core | Device | SoC | Firmware | Kernel |
+| --- | --- | --- | --- | --- | --- |
+| `quest3/global/5.10.240-gce8cca212ac5` | `core510` | Meta Quest 3 (`eureka`) | Qualcomm SXR2230P (`anorak`) | Horizon OS, incremental `52345320027600520`, `UP1A.231005.007.A1`, SDK 34 | `5.10.240-gce8cca212ac5` (Meta's own 5.10, 4K pages, `VA_BITS=39`) |
+
+It builds — `make TARGET=quest3/global/5.10.240-gce8cca212ac5 CORE=core510` —
+and it is out of the feed for two reasons, both of which have to be answered
+before it goes in:
+
+- **Nothing here has run on this device.** The offsets are recovered from this
+  build's own boot image and cross-checked twice over, and the core they feed
+  is a port whose author reports a working root on a different build of the
+  same device; neither of those is a run. Upstream also warns that a failed
+  attempt can hang the device until the power button is held.
+- **A target directory must contain a `kernelsu.json`**, and this device has no
+  KernelSU build to name: the kernel is Meta's own rather than a GKI branch, so
+  there is no KMI a module could be built against. Carrying it out of
+  `src/targets.json` is the smaller answer; teaching the feed generator that a
+  target can have no KernelSU build is the other one, and it would change what
+  the app is told about every target.
+
+The application route has a third open end of its own, described in
+[`core510/root.c`](src/payloads/CVE-2026-43499/core510/root.c): this core execs
+a second, 32-bit binary partway through, and both the path it is staged at and
+the path it is exec'd from are inside `/data/local/tmp`, which an
+application-launched run cannot write.
+
 ## Cores
 
 This attack chain is fixed to a **GKI branch**, not to a SoC. A target on a
@@ -46,19 +78,26 @@ core with different offsets — and each target names the one it needs in
 | --- | --- | --- | --- |
 | `core66` | `android15-6.6` | pmg110-root | swaps a forked *child*'s cred, then queues a `call_usermodehelper` work item from the still-unprivileged parent to exec the helper |
 | `core612` | `android16-6.12` | warhol-root — upstream popsicle plus the kernel-MTE fix that device needs | swaps the exploit process's own cred and reloads the SELinux policy, then execs the helper directly |
+| `core510` | `5.10` — Meta's own kernel for Quest 3, which is not a GKI branch at all | [IonStackQuest3](https://github.com/grayawa/IonStackQuest3) | swaps a forked *child*'s cred and clears that child's seccomp filter through the same write, and the child execs the helper |
 
-Neither core is this repository's own work and neither is edited to resemble
-the other, so a fix can be taken from upstream and no kernel's constants can
-leak into another kernel's tree. What is this repository's own is the glue
-around them — `<core>/root.c`, `mte.c`, `preload.c` and `payload.h`, described
-under [Layout](#layout).
+No core is this repository's own work and none is edited to resemble another,
+so a fix can be taken from upstream and no kernel's constants can leak into
+another kernel's tree. What is this repository's own is the glue around them —
+`<core>/root.c`, `mte.c`, `preload.c` and `payload.h`, described under
+[Layout](#layout).
 
 A core's own code stays in that core's directory, `root.c` included: it is the
 one file under `src/payloads/<payload>/<core>/` that this repository wrote
-rather than imported. Neither port has a file by that name — their app glue is
+rather than imported. No port has a file by that name — their app glue is
 `preload.c`, `su_daemon.c` and an `.incbin` blob, none of which was copied — so
 re-importing a core is still "replace everything there but `root.c`", and the
 build lists it apart from the imported sources for the same reason.
+
+`core510` is the exception to that last sentence, and the reason is worth
+stating once: the tree it came from *does* have a `root.c`, and there it is the
+exploit's own final stage rather than app glue. It is imported byte-identical
+as `root_stage.c`, so re-importing that core is "replace everything there but
+`root.c`", with `root_stage.c` among the files replaced.
 
 `core612` carries one delta against warhol-root, and only this one:
 
@@ -83,6 +122,24 @@ build lists it apart from the imported sources for the same reason.
   itself is unreachable here: nothing in this repository or in the application
   passes `--bootstrap`.
 
+`core510` carries three deltas against IonStackQuest3, and only these three:
+
+- `q3slide.c` returns `0` rather than `1` from every failure path of
+  `getkerneltextstart()`. Upstream's `1` is indistinguishable from a leaked
+  base of `0x1`, and the caller does not check: on a device where
+  `perf_event_open` is closed, the run would go on to aim its arbitrary write
+  at `0x1 + offset`.
+- `slide.c` gains `slide_base_plausible()`, which refuses a base that is not a
+  kernel VA, not 2 MiB aligned, or implausibly far from the link-time base, so
+  a failed leak stops before the write instead of after it. Neither of these
+  two is gated: there is no target for which upstream's behaviour is the
+  wanted default, and both were written while porting this core to the build
+  the `quest3` target describes.
+- `common.h` guards `EXP32_LOCAL` with `#ifndef`, leaving upstream's value as
+  the default, so a target header can name the path instead. `api.c` execs that
+  path as a compile-time constant, and a run that cannot write
+  `/data/local/tmp` has no way to move it at run time.
+
 Whichever core a target names, `readelf --dyn-syms` on the built
 `*-app.release.so` should report no undefined symbol outside `@LIBC`. Anything
 else is a call that will fail at `dlopen` on the device rather than in the
@@ -90,7 +147,10 @@ build.
 
 A new core is added by dropping the tree in as `src/payloads/<payload>/<core>/`,
 writing the `root.c` beside it that fills its root seam, and naming it from a
-target. Nothing in the Makefile or the workflow has to learn about it.
+target. The Makefile has to learn about it only where the core's shape differs
+from the two it was written for: `core510` compiles four more files than
+`CORE_SRCS` lists and builds a second artifact, and both are one conditional
+each, keyed on the core name.
 
 Root My Device requires both the exact `uname -r` value in `kernelRelease` and
 the exact `uname -v` value in `kernelBuildVersion`. The second distinguishes
@@ -102,6 +162,10 @@ display ID, SDK, ABI, and page size remain part of automatic target selection.
 
 The port is based on the exploit source published at
 <https://github.com/NebuSec/CyberMeowfia/tree/main/IonStack/CVE-2026-43499/exploit>.
+[grayawa/IonStackQuest3](https://github.com/grayawa/IonStackQuest3) is that
+source adapted to Meta Quest 3, and is the reference implementation `core510`
+was imported from — including its `gen_ionstack_config.py`, which is what
+recovers a build's symbol offsets for that core.
 
 ## Kernel MTE
 
@@ -152,9 +216,14 @@ src/payloads/<payload>/               one directory per exploit
                                       and this repository's, not the port's
                      core612/         the 6.12 core, from warhol-root
                        root.c         direct-exec route to the same
+                     core510/         the 5.10 core, from IonStackQuest3
+                       root.c         the seam: helper install, and staging the
+                                      32-bit stage the core execs
+                       root_stage.c   that port's own root.c, imported unchanged
+                       exp32/          the 32-bit stage, built as its own artifact
                      mte.c            whether this boot's kernel tags heap pointers
-                     preload.c        the retry supervisor, shared by both
-                     payload.h        what those four agree on
+                     preload.c        the retry supervisor, shared by all
+                     payload.h        what those agree on
 src/payloads/su_daemon/               the bootstrap helper the app ships in its APK
                      su_daemon.c      the su daemon: protocol, uid check, exec
                      late_load.c      all it knows about KernelSU
@@ -229,6 +298,11 @@ make TARGET=warhol/jp/6.12.38-android16-5-g1d46253471dd-ab15048002-4k \
   CORE=core612 ANDROID_NDK_HOME=/path/to/android-ndk
 ```
 
+```sh
+make TARGET=quest3/global/5.10.240-gce8cca212ac5 \
+  CORE=core510 ANDROID_NDK_HOME=/path/to/android-ndk
+```
+
 `TARGET` and `PAYLOAD` default to the pmg110 values above and `CORE` to
 `core66`. Outputs land in `build/<target with / as _>/`:
 
@@ -237,6 +311,22 @@ cve-2026-43499
 cve-2026-43499-app.so
 cve-2026-43499-app.release.so
 cve-2026-43499-root
+cve-2026-43499-exp32       core510 only
+```
+
+`cve-2026-43499-exp32` is armeabi-v7a and static, and the NDK has to carry that
+toolchain as well — the build says so rather than failing in the compiler. It
+has to stay 32-bit: the stack geometry `core510` stamps its fake waiter at is
+the compat one. A target header's `EXP32_STAGED_PATH` is where
+`core510/root.c` looks for it, and `EXP32_LOCAL` (its `common.h`, overridable
+from the target header) is where the core execs it from.
+
+`P0_KERNEL_PHYS_LOAD` is the one constant the quest3 target could not measure,
+and its header leaves it overridable rather than pretending otherwise:
+
+```sh
+make TARGET=quest3/global/5.10.240-gce8cca212ac5 CORE=core510 \
+  EXTRA_CFLAGS=-DP0_KERNEL_PHYS_LOAD=0x8E780000ULL
 ```
 
 `CORE` also decides which header the build reads and which root glue it links:

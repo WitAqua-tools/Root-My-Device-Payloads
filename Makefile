@@ -12,10 +12,16 @@ PAYLOAD ?= CVE-2026-43499
 #
 #   core66   android15-6.6, from pmg110-root
 #   core612  android16-6.12, from warhol-root (upstream popsicle plus its MTE fix)
+#   core510  5.10 (Meta's own kernel, not a GKI branch), from IonStackQuest3
 #
 # It is declared per target in src/targets.json and CI passes it down, so the
 # default here only matters for a hand-typed build.
 CORE ?= core66
+
+# core510 stamps its fake waiter into a compat syscall's stack frame, so it
+# execs a 32-bit stage to do it. API32 is that stage's minSdk, not this
+# repository's: it is what upstream builds it against.
+API32 ?= 28
 
 TARGET_DIR := src/targets/$(TARGET)
 # One header per core, because a core reads offsets the other has never heard
@@ -41,6 +47,7 @@ HELPER_SRCS := \
 OUTDIR ?= build/$(subst /,_,$(TARGET))
 
 TARGET_CC := $(ANDROID_NDK_HOME)/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android$(API)-clang
+TARGET_CC32 := $(ANDROID_NDK_HOME)/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi$(API32)-clang
 
 ifeq ($(wildcard $(TARGET_CC)),)
 $(error set ANDROID_NDK_HOME to an Android NDK containing $(TARGET_CC))
@@ -64,31 +71,51 @@ APP_RELEASE := $(OUTDIR)/$(PAYLOAD_SLUG)-app.release.so
 APP_RELEASE_SIZE := 104128
 ROOT_HELPER := $(OUTDIR)/$(PAYLOAD_SLUG)-root
 
-# Both cores are imported trees kept as close to the port they came from as
-# they can be: core612 carries one delta against warhol-root and core66 two
-# against pmg110-root, all listed in the README. The one file under $(CORE_DIR)
-# that is *not* imported is root.c, which is this repository's own and is named
-# so that a core's code stays in that core's directory:
+# core510 is the one core that needs a second binary on the device before it
+# can reach root: it stamps its fake waiter into a compat syscall's stack
+# frame, so that part runs in a 32-bit process it execs. Upstream carries it as
+# an .incbin blob inside its own app glue; here it is a separate artifact,
+# because the application payload is a fixed-size release object and a static
+# armv7 binary does not fit in it. core510/root.c is the seam that gets it to
+# the path api.c execs.
+EXP32_CORES := core510
+EXP32 := $(OUTDIR)/$(PAYLOAD_SLUG)-exp32
+EXP32_SRCS := $(CORE_DIR)/exp32/main.c $(CORE_DIR)/exp32/stack.c
+EXP32_ARTIFACT := $(if $(filter $(CORE),$(EXP32_CORES)),$(EXP32))
+
+ifneq ($(EXP32_ARTIFACT),)
+ifeq ($(wildcard $(TARGET_CC32)),)
+$(error $(CORE) needs a 32-bit stage; set ANDROID_NDK_HOME to an NDK containing $(TARGET_CC32))
+endif
+endif
+
+# Every core is an imported tree kept as close to the port it came from as it
+# can be: core612 carries one delta against warhol-root, core66 two against
+# pmg110-root and core510 three against IonStackQuest3, all listed in the
+# README. The one file under $(CORE_DIR) that is *not* imported is root.c,
+# which is this repository's own and is named so that a core's code stays in
+# that core's directory:
 #
 #   <core>/root.c  how that core gets the bootstrap helper resident as root.
 #                  core66 queues a usermodehelper work item from an
 #                  unprivileged process (install_android_root); core612 is
-#                  already root and execs it (install_embedded_su). One is
-#                  linked per build, and it is listed apart from CORE_SRCS
-#                  below so the build still says which side of the import each
-#                  file is on.
+#                  already root and execs it (install_embedded_su); core510
+#                  roots a forked child that has had its seccomp filter cleared
+#                  as well, and that child execs it. One is linked per build,
+#                  and it is listed apart from CORE_SRCS below so the build
+#                  still says which side of the import each file is on.
 #
-# Neither port has a file by that name -- their own app glue is preload.c,
+# No port has a file by that name -- their own app glue is preload.c,
 # su_daemon.c and an .incbin blob, none of which was copied -- so re-importing
 # a core is still "replace everything here but root.c".
 #
-# What is this repository's own and shared by both cores:
+# What is this repository's own and shared by every core:
 #
 #   mte.c          whether this boot's kernel tags heap pointers. Core-neutral
 #                  and linked into every build; core612 is the one that reads
 #                  it, because warhol's answer follows the flashed preloader
 #                  rather than the firmware its target header came from.
-#   preload.c      the retry supervisor, shared by both.
+#   preload.c      the retry supervisor, shared by all.
 #
 # payload.h is the seam between them.
 CORE_SRCS := \
@@ -97,6 +124,18 @@ CORE_SRCS := \
   $(CORE_DIR)/slide.c \
   $(CORE_DIR)/fops.c \
   $(CORE_DIR)/pipe.c
+
+# core510 came from a tree that splits the chain across more files, and one of
+# them is its own root.c: there the cred and seccomp arithmetic is the
+# exploit's final stage rather than app glue, so the import keeps it
+# byte-identical as root_stage.c and core510/root.c is only the seam. Listed
+# here rather than merged into CORE_SRCS so each file still says which side of
+# the import it is on.
+CORE_SRCS += $(if $(filter $(CORE),core510),\
+  $(CORE_DIR)/api.c \
+  $(CORE_DIR)/config.c \
+  $(CORE_DIR)/q3slide.c \
+  $(CORE_DIR)/root_stage.c)
 
 PRELOAD_SRCS := \
   $(CORE_SRCS) \
@@ -126,21 +165,34 @@ PAYLOAD_DEPS := $(TARGET_HEADER) $(PAYLOAD_DIR)/payload.h \
 TARGET_HEADER_DEFINES := \
   -DTARGET_HEADER='"$(TARGET_INCLUDE)"' -DTARGET_CONFIG_H='"$(TARGET_INCLUDE)"'
 
+# EXTRA_CFLAGS is for the constants a target header deliberately leaves
+# overridable -- quest3's P0_KERNEL_PHYS_LOAD is one, and it is the only way to
+# try its alternates without editing a generated block.
 COMMON_CFLAGS := \
   -O2 -g0 -Wall -Wextra \
   -Wno-unused-parameter -Wno-sign-compare \
-  -I$(CORE_DIR) -I$(PAYLOAD_DIR) -I$(TARGET_DIR) -Isrc $(TARGET_HEADER_DEFINES)
+  -I$(CORE_DIR) -I$(PAYLOAD_DIR) -I$(TARGET_DIR) -Isrc $(TARGET_HEADER_DEFINES) \
+  $(EXTRA_CFLAGS)
 
 .DEFAULT_GOAL := all
 
 .PHONY: all clean info release
 
-all: $(PRELOAD) $(APP_PRELOAD) $(ROOT_HELPER)
+all: $(PRELOAD) $(APP_PRELOAD) $(ROOT_HELPER) $(EXP32_ARTIFACT)
 
-release: $(APP_RELEASE)
+release: $(APP_RELEASE) $(EXP32_ARTIFACT)
 
 $(OUTDIR):
 	mkdir -p $@
+
+# armeabi-v7a, static, PIE. It has to stay 32-bit: the stack geometry the stamp
+# is written at is the compat one, and a 64-bit build of the same source would
+# land somewhere else entirely. Built with the core's own flags rather than
+# COMMON_CFLAGS -- it shares no header with the payload but the kernelsnitch
+# helpers, and it never sees the target header.
+$(EXP32): $(EXP32_SRCS) $(wildcard $(CORE_DIR)/kernelsnitch/*.h) | $(OUTDIR)
+	$(TARGET_CC32) -O2 -g0 -Wall -Wno-unused-parameter -Wno-unused-function \
+	  -I$(CORE_DIR) -fPIE -pie -static $(EXP32_SRCS) -o $@
 
 $(PRELOAD): $(PRELOAD_SRCS) $(PAYLOAD_DEPS) | $(OUTDIR)
 	$(TARGET_CC) -fPIC $(COMMON_CFLAGS) $(PRELOAD_SRCS) \
