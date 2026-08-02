@@ -31,7 +31,7 @@
     "That build now happens in Root-My-Device-Kernel, and this entry references",
     "its result rather than building one -- see prebuiltModule below. ddkImage",
     "still names the closest KMI, which is what ksud is built with and what",
-    "says which KMI this is; the module does not come from it.
+    "says which KMI this is; the module does not come from it.",
     "",
     "Measured on the device and worth keeping:",
     "  - CONFIG_MODULES=y and CONFIG_MODULE_SIG unset, so unsigned modules load.",
