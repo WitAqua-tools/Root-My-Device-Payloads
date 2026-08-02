@@ -165,6 +165,8 @@ jobs:
           kernel-release: ${{ matrix.build.kernelRelease }}
           config: ${{ join(matrix.build.config, ' ') }}
           patch-sets: ${{ join(matrix.build.patchSets, ' ') }}
+          manager-signature-size: ${{ matrix.build.managerSignature.size }}
+          manager-signature-hash: ${{ matrix.build.managerSignature.hash }}
           ndk-version: ${{ env.NDK_VERSION }}
       - uses: actions/upload-artifact@v4
         with:
@@ -202,6 +204,8 @@ jobs:
           kernel-release: ${{ matrix.build.kernelRelease }}
           config: ${{ join(matrix.build.config, ' ') }}
           patch-sets: ${{ join(matrix.build.patchSets, ' ') }}
+          manager-signature-size: ${{ matrix.build.managerSignature.size }}
+          manager-signature-hash: ${{ matrix.build.managerSignature.hash }}
           ndk-version: ${{ env.NDK_VERSION }}
       - uses: actions/upload-artifact@v4
         with:

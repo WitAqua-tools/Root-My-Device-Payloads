@@ -16,6 +16,7 @@ Modes:
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -149,6 +150,93 @@ def kernelsu_manager(root: Path) -> dict | None:
         "managerVersionName": name or str(version),
         "managerUrl": url,
     }
+
+
+MANAGER_KEYS = {
+    "url": "managerUrl",
+    "versionName": "managerVersionName",
+    "versionCode": "managerVersionCode",
+}
+
+
+def build_manager(build: dict) -> dict:
+    """A manager this build needs instead of the one its pin implies.
+
+    The pinned KernelSU decides which upstream manager a module pairs with, and
+    for most targets that is the whole answer. It is not the answer for a target
+    whose ksud carries patches: the manager rewrites /data/adb/ksud with the
+    copy bundled in its own APK the first time it runs, so the official one
+    silently puts an unpatched daemon back. Such a target names a manager built
+    with those patches in it, and says so, because installing that manager is
+    then part of the install rather than an upgrade someone can skip -- and
+    because a manager built elsewhere is signed elsewhere, which is a thing a
+    user is entitled to be told before they are sent to it.
+    """
+    override = build.get("manager")
+    if not override:
+        return {}
+    fields = {out: override[key] for key, out in MANAGER_KEYS.items() if key in override}
+    if override.get("required"):
+        fields["managerCustom"] = True
+    if override.get("reason"):
+        fields["managerNote"] = override["reason"]
+    return fields
+
+
+def check_manager(label: str, build: dict, problems: Problems) -> None:
+    override = build.get("manager")
+    if override is None:
+        return
+    if not isinstance(override, dict):
+        problems.add(f"{label}: kernelsu.json manager must be an object")
+        return
+    unknown = set(override) - set(MANAGER_KEYS) - {"required", "reason", "$comment"}
+    if unknown:
+        problems.add(f"{label}: kernelsu.json manager has unknown key(s) {sorted(unknown)}")
+    # A manager entry that names no download is worse than none: the app would
+    # keep pointing at upstream's while the target claims it needs another.
+    if not override.get("url"):
+        problems.add(f"{label}: kernelsu.json manager needs a url")
+    if "versionCode" in override and not isinstance(override["versionCode"], int):
+        problems.add(f"{label}: kernelsu.json manager.versionCode must be an integer")
+    for key in ("versionName", "reason"):
+        if key in override and not isinstance(override[key], str):
+            problems.add(f"{label}: kernelsu.json manager.{key} must be a string")
+    if "required" in override and not isinstance(override["required"], bool):
+        problems.add(f"{label}: kernelsu.json manager.required must be a boolean")
+    # Saying a manager is required without saying why leaves the app with a
+    # warning it cannot explain, on a screen where the next step is a download.
+    if override.get("required") and not override.get("reason"):
+        problems.add(f"{label}: kernelsu.json manager.required needs a reason")
+
+
+def check_manager_signature(label: str, build: dict, problems: Problems) -> None:
+    """The certificate this build's module is told to accept as a manager.
+
+    KernelSU's module picks its manager by hashing the APK's v2 signing
+    certificate against a size and hash compiled in. A manager built anywhere
+    but upstream is signed anywhere but upstream, so a module that does not
+    carry that certificate in one of its two slots does not see it -- and says
+    nothing about why. The pair is not a secret; it is recorded here so the
+    module and the APK cannot come apart, and so the build fails rather than
+    the device going quiet.
+    """
+    signature = build.get("managerSignature")
+    if signature is None:
+        if build.get("manager"):
+            problems.add(
+                f"{label}: kernelsu.json names a manager of its own but no "
+                "managerSignature, so the module it builds would not recognise it"
+            )
+        return
+    if not isinstance(signature, dict) or set(signature) - {"size", "hash", "$comment"}:
+        problems.add(f"{label}: kernelsu.json managerSignature must be an object of size and hash")
+        return
+    size, digest = signature.get("size"), signature.get("hash")
+    if not isinstance(size, str) or not re.fullmatch(r"0x[0-9a-f]{4}", size):
+        problems.add(f"{label}: managerSignature.size must look like 0x0524, got {size!r}")
+    if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+        problems.add(f"{label}: managerSignature.hash must be a lowercase sha256, got {digest!r}")
 
 
 def patch_sets_dir(root: Path) -> Path | None:
@@ -302,6 +390,8 @@ def load_sources(root: Path, problems: Problems) -> list[dict]:
         target["_kernelsu"] = json.loads(kernelsu_path.read_text(encoding="utf-8"))
         target["_dir"] = directory
         check_patch_sets(root, label, target["_kernelsu"], problems)
+        check_manager(label, target["_kernelsu"], problems)
+        check_manager_signature(label, target["_kernelsu"], problems)
 
         # The app matches kernelRelease and kernelBuildVersion separately but
         # both are read off the same /proc/version line. If either is not
@@ -477,7 +567,7 @@ def main() -> int:
             "size": ksud.stat().st_size,
             "kmi": build["kmi"],
             "managerPackage": build["managerPackage"],
-        } | manager
+        } | manager | build_manager(build)
         entries.append(entry)
 
     if problems:
