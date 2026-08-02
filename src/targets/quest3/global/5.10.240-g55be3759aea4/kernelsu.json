@@ -31,7 +31,7 @@
     "So the action would need a way to take a kernel tree instead of a DDK",
     "image before it could build this target. Until it does, ddkImage names the",
     "closest KMI so the entry is well-formed and says which one it is; building",
-    "from it produces a module that loads and then kills the device.",
+    "from it produces a module that reboots the device on load.",
     "",
     "Measured on the device and worth keeping:",
     "  - CONFIG_MODULES=y and CONFIG_MODULE_SIG unset, so unsigned modules load.",
