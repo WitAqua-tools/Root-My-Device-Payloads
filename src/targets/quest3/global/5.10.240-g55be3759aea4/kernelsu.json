@@ -74,8 +74,8 @@
       "certificate on top of it -- the same things it proves about a module it",
       "built itself."
     ],
-    "url": "https://github.com/WitAqua-tools/Root-My-Device-Kernel/releases/download/modules-20260802-ed67fc6/kernelsu-quest3.ko",
-    "sha256": "591f865f892a0b9bcf3a43fe7e1d9d11efd4036df11bd3e100be84f61f317b29"
+    "url": "https://github.com/WitAqua-tools/Root-My-Device-Kernel/releases/download/modules-20260802-c9a18a5/kernelsu-quest3.ko",
+    "sha256": "d0932308029dababaff03868d11cf8714212af2dfb894ef4cf00c5db291b9f51"
   },
   "manager": {
     "$comment": [
