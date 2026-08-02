@@ -101,8 +101,9 @@ behind its own `CONFIG_KSU_SAMSUNG_*` option, which the target passes in
 `config` alongside the set — the options gate code that only the set puts there,
 so either one without the other does nothing.
 
-No target in this repository currently names a set: every build here is
-`common` alone.
+One target names a set: `quest3` takes `devices/quest3`, which keeps the
+tracepoint mark on the zygote launcher Horizon OS boots through. Every other
+build here is `common` alone.
 
 A name that resolves to nothing fails the build, and `tools/generate_feed.py`
 fails on it in seconds beforehand whenever the submodule is checked out. That is

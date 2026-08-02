@@ -44,13 +44,21 @@
     "    extract_target_symvers.py against a vmlinux recovered from the running",
     "    kernel, then audit_module_against_target.py. MISSING_SYMBOL is fatal,",
     "    MISSING_EXPORT is not. android14-6.1 gives 10, android12-5.10 gives 1,",
-    "    the real source gives 0."
+    "    the real source gives 0.",
+    "",
+    "devices/quest3 is upstream 953b403a backported onto the pinned 32525. It",
+    "keeps the tracepoint mark on /system/bin/stub_zygote, which is how Horizon",
+    "OS starts the zygote; without it a `ksud soft-reboot` brings back a zygote",
+    "no KernelSU hook fires for, and the manager dies with SIGSYS on its first",
+    "supercall. The set exists at 32514 and 32525 and deliberately not at",
+    "32567, which already carries the commit: a pin move to it fails this build",
+    "until the name is taken out of patchSets, which is the reminder wanted."
   ],
   "id": "quest3",
   "kmi": "android12-5.10",
   "ddkImage": "ghcr.io/ylarod/ddk-min:android12-5.10-20260313",
   "kernelRelease": "5.10.240-g55be3759aea4",
-  "patchSets": [],
+  "patchSets": ["devices/quest3"],
   "config": [],
   "managerPackage": "me.weishu.kernelsu"
 }
