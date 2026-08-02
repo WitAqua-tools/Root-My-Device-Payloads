@@ -185,11 +185,13 @@ release: $(APP_RELEASE) $(EXP32_ARTIFACT)
 $(OUTDIR):
 	mkdir -p $@
 
-# armeabi-v7a, static, PIE. It has to stay 32-bit: the stack geometry the stamp
+# armeabi-v7a and static. It has to stay 32-bit: the stack geometry the stamp
 # is written at is the compat one, and a 64-bit build of the same source would
-# land somewhere else entirely. Built with the core's own flags rather than
-# COMMON_CFLAGS -- it shares no header with the payload but the kernelsnitch
-# helpers, and it never sees the target header.
+# land somewhere else entirely. -fPIE -pie is upstream's spelling and is kept
+# so the two build the same binary; -static wins over it and what comes out is
+# an ELF32 ARM EXEC, which is what upstream ships too. Built with the core's
+# own flags rather than COMMON_CFLAGS -- it shares no header with the payload
+# but the kernelsnitch helpers, and it never sees the target header.
 $(EXP32): $(EXP32_SRCS) $(wildcard $(CORE_DIR)/kernelsnitch/*.h) | $(OUTDIR)
 	$(TARGET_CC32) -O2 -g0 -Wall -Wno-unused-parameter -Wno-unused-function \
 	  -I$(CORE_DIR) -fPIE -pie -static $(EXP32_SRCS) -o $@
