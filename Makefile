@@ -73,15 +73,17 @@ ROOT_HELPER := $(OUTDIR)/$(PAYLOAD_SLUG)-root
 
 # core510 is the one core that needs a second binary on the device before it
 # can reach root: it stamps its fake waiter into a compat syscall's stack
-# frame, so that part runs in a 32-bit process it execs. Upstream carries it as
-# an .incbin blob inside its own app glue; here it is a separate artifact,
-# because the application payload is a fixed-size release object and a static
-# armv7 binary does not fit in it. core510/root.c is the seam that gets it to
-# the path api.c execs.
+# frame, so that part runs in a 32-bit process it execs. It is built as an
+# artifact, the way the bootstrap helper is, so a shell run can push it -- and
+# the same artifact is then .incbin'd back into the payload, because an
+# application-launched run has nothing to push with. One build, two ways to
+# arrive; core510/root.c is the seam that decides which one a run uses.
 EXP32_CORES := core510
 EXP32 := $(OUTDIR)/$(PAYLOAD_SLUG)-exp32
 EXP32_SRCS := $(CORE_DIR)/exp32/main.c $(CORE_DIR)/exp32/stack.c
 EXP32_ARTIFACT := $(if $(filter $(CORE),$(EXP32_CORES)),$(EXP32))
+EXP32_BLOB_SRC := $(if $(EXP32_ARTIFACT),$(CORE_DIR)/exp32_blob.S)
+EXP32_BLOB_DEFINE := $(if $(EXP32_ARTIFACT),-DEXP32_BLOB_FILE='"$(EXP32)"')
 
 ifneq ($(EXP32_ARTIFACT),)
 ifeq ($(wildcard $(TARGET_CC32)),)
@@ -92,9 +94,10 @@ endif
 # Every core is an imported tree kept as close to the port it came from as it
 # can be: core612 carries one delta against warhol-root, core66 two against
 # pmg110-root and core510 three against IonStackQuest3, all listed in the
-# README. The one file under $(CORE_DIR) that is *not* imported is root.c,
-# which is this repository's own and is named so that a core's code stays in
-# that core's directory:
+# README. What under $(CORE_DIR) is *not* imported is root.c -- and, for
+# core510 alone, the exp32_blob.S that carries its 32-bit stage inside the
+# payload. Both are this repository's own, and are named so that a core's code
+# stays in that core's directory:
 #
 #   <core>/root.c  how that core gets the bootstrap helper resident as root.
 #                  core66 queues a usermodehelper work item from an
@@ -140,12 +143,15 @@ CORE_SRCS += $(if $(filter $(CORE),core510),\
 PRELOAD_SRCS := \
   $(CORE_SRCS) \
   $(CORE_DIR)/root.c \
+  $(EXP32_BLOB_SRC) \
   $(PAYLOAD_DIR)/mte.c \
   $(PAYLOAD_DIR)/preload.c
 
 APP_PRELOAD_SRCS := $(PRELOAD_SRCS)
+# The blob source .incbin's the exp32 artifact, so the artifact is a
+# prerequisite of every payload that carries it.
 PAYLOAD_DEPS := $(TARGET_HEADER) $(PAYLOAD_DIR)/payload.h \
-  $(wildcard $(CORE_DIR)/*.h $(CORE_DIR)/kernelsnitch/*.h)
+  $(wildcard $(CORE_DIR)/*.h $(CORE_DIR)/kernelsnitch/*.h) $(EXP32_ARTIFACT)
 
 # -Isrc resolves the "targets/<...>/<header>" form that core66/offset.h
 # includes -- it was "../targets/..." while the core sat directly under src/,
@@ -172,7 +178,7 @@ COMMON_CFLAGS := \
   -O2 -g0 -Wall -Wextra \
   -Wno-unused-parameter -Wno-sign-compare \
   -I$(CORE_DIR) -I$(PAYLOAD_DIR) -I$(TARGET_DIR) -Isrc $(TARGET_HEADER_DEFINES) \
-  $(EXTRA_CFLAGS)
+  $(EXP32_BLOB_DEFINE) $(EXTRA_CFLAGS)
 
 .DEFAULT_GOAL := all
 
@@ -185,13 +191,21 @@ release: $(APP_RELEASE) $(EXP32_ARTIFACT)
 $(OUTDIR):
 	mkdir -p $@
 
-# armeabi-v7a and static. It has to stay 32-bit: the stack geometry the stamp
-# is written at is the compat one, and a 64-bit build of the same source would
-# land somewhere else entirely. -fPIE -pie is upstream's spelling and is kept
-# so the two build the same binary; -static wins over it and what comes out is
-# an ELF32 ARM EXEC, which is what upstream ships too. Built with the core's
-# own flags rather than COMMON_CFLAGS -- it shares no header with the payload
-# but the kernelsnitch helpers, and it never sees the target header.
+# armeabi-v7a, and a dynamically linked PIE. It has to stay 32-bit: the stack
+# geometry the stamp is written at is the compat one, and a 64-bit build of the
+# same source would land somewhere else entirely. Built with the core's own
+# flags rather than COMMON_CFLAGS -- it shares no header with the payload but
+# the kernelsnitch helpers, and it never sees the target header.
+#
+# DELTA against IonStackQuest3, which builds this -static: an
+# application-launched run may not execve() a file it wrote itself, and its one
+# remaining way to start this stage is to hand it to bionic's linker as a
+# loader -- which can only load a dynamic PIE (core510/root.c has the policy
+# read). Dropping -static is what makes that route exist, and it takes the
+# stage from about 1.6MB to tens of kilobytes, which is also what lets the
+# payload carry a copy at all. A shell run execs it directly either way. The
+# static build is still one flag away (EXP32_CFLAGS=-static) for comparing
+# against the run that first reached root on quest3, which was a static one.
 #
 # EXP32_CFLAGS is a lever of its own rather than a share of EXTRA_CFLAGS,
 # because the one flag anybody needs here must NOT reach the 64-bit payload.
@@ -204,9 +218,13 @@ $(OUTDIR):
 # synchronous write inside the race window, so it is not obviously
 # decoration. Reproduce that build with EXP32_CFLAGS=-DDEBUG.
 EXP32_CFLAGS ?=
-$(EXP32): $(EXP32_SRCS) $(wildcard $(CORE_DIR)/kernelsnitch/*.h) | $(OUTDIR)
+# Makefile is a prerequisite here and nowhere else: this artifact's flags are
+# the ones that get changed by hand, and a stale copy of it is now linked into
+# the payload rather than only pushed, so "left over from the previous flags"
+# would be a payload carrying a stage nobody asked for.
+$(EXP32): $(EXP32_SRCS) $(wildcard $(CORE_DIR)/kernelsnitch/*.h) Makefile | $(OUTDIR)
 	$(TARGET_CC32) -O2 -g0 -Wall -Wno-unused-parameter -Wno-unused-function \
-	  -I$(CORE_DIR) $(EXP32_CFLAGS) -fPIE -pie -static $(EXP32_SRCS) -o $@
+	  -I$(CORE_DIR) $(EXP32_CFLAGS) -fPIE -pie $(EXP32_SRCS) -o $@
 
 $(PRELOAD): $(PRELOAD_SRCS) $(PAYLOAD_DEPS) | $(OUTDIR)
 	$(TARGET_CC) -fPIC $(COMMON_CFLAGS) $(PRELOAD_SRCS) \
@@ -226,7 +244,7 @@ $(APP_RELEASE): $(APP_PRELOAD_SRCS) $(PAYLOAD_DEPS) | $(OUTDIR)
 	  -ffunction-sections -fdata-sections \
 	  -Wall -Wextra -Wno-unused-parameter -Wno-sign-compare \
 	  -I$(CORE_DIR) -I$(PAYLOAD_DIR) -I$(TARGET_DIR) -Isrc \
-	  $(TARGET_HEADER_DEFINES) \
+	  $(TARGET_HEADER_DEFINES) $(EXP32_BLOB_DEFINE) \
 	  $(APP_PRELOAD_SRCS) -shared -pthread \
 	  -Wl,--gc-sections -Wl,--icf=all -s -o $@
 	@test $$(stat -c %s $@) -le $(APP_RELEASE_SIZE)

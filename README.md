@@ -71,12 +71,16 @@ seven fires produced two roots and the rest rebooted. A target header's
 `PAYLOAD_ATTEMPT_BUDGET` is `1` for that reason: retrying belongs outside the
 process, across the reboot.
 
-The application route has an open end of its own, described in
-[`core510/root.c`](src/payloads/CVE-2026-43499/core510/root.c): this core execs
-a second, 32-bit binary partway through, and both the path it is staged at and
-the path it is exec'd from are inside `/data/local/tmp`, which an
-application-launched run cannot write. The root above was reached from an adb
-shell, which is the route that can.
+The application route needs one thing no other core needs, and
+[`core510/root.c`](src/payloads/CVE-2026-43499/core510/root.c) is where it is
+answered: this core execs a second, 32-bit binary partway through, and an
+application may not execve a file it wrote itself. It writes that stage beside
+whatever object the payload was loaded from — for an application-launched run
+that is the app's own storage, which it can write — and starts it through
+`/system/bin/linker`, which policy does let an app exec and which needs only to
+read the stage. A shell run still stages it in `/data/local/tmp` and execs it
+directly. The measurements behind that are in the port's own notes, not here.
+No application-launched run has reached root on this device yet.
 
 One number this core needs is build-dependent and does not live in a target
 header: the `0x34` in `core510/exp32/stack.c`, where inside the 260-byte
@@ -150,9 +154,23 @@ upstream's behaviour is the wanted default.
 This repository's shape:
 
 - `common.h` guards `EXP32_LOCAL` with `#ifndef`, leaving upstream's value as
-  the default, so a target header can name the path instead. `api.c` execs that
-  path as a compile-time constant, and a run that cannot write
-  `/data/local/tmp` has no way to move it at run time.
+  the default, so a target header can name the path instead.
+- Where the 32-bit stage ends up, and how it is started there, are decided at
+  run time in `root.c` instead of being the one compile-time constant `api.c`
+  execs. Upstream's destination is used when it is writable; otherwise the
+  stage is written beside the object the payload was loaded from. Starting it
+  tries `execve` first and falls back to `/system/bin/linker` as a loader, which
+  is the only route an application-launched run has. `api.c`'s two lines about
+  the path move to `exp32_exec()` and `exp32_stage_path()`, and `util.c` gains
+  weak stubs for both so an import without `root.c` still links and still
+  behaves as upstream did.
+- The stage is linked dynamically rather than `-static`, and the same artifact
+  is `.incbin`'d back into the payload (`exp32_blob.S`, this repository's file).
+  Both follow from the above: the linker can only load a dynamic PIE, and an
+  application-launched run has nothing to push a copy with. It also takes the
+  stage from 1.6 MB to about 10 KB, which is what makes a copy inside the
+  fixed-size application payload possible at all. `EXP32_CFLAGS=-static` still
+  builds upstream's form, for comparing against the run that first reached root.
 
 What the device required. Each of these was found by a run that failed, and
 the first two are why a run could not succeed at all:
@@ -394,12 +412,14 @@ cve-2026-43499-root
 cve-2026-43499-exp32       core510 only
 ```
 
-`cve-2026-43499-exp32` is armeabi-v7a and static, and the NDK has to carry that
-toolchain as well — the build says so rather than failing in the compiler. It
-has to stay 32-bit: the stack geometry `core510` stamps its fake waiter at is
-the compat one. A target header's `EXP32_STAGED_PATH` is where
-`core510/root.c` looks for it, and `EXP32_LOCAL` (its `common.h`, overridable
-from the target header) is where the core execs it from.
+`cve-2026-43499-exp32` is armeabi-v7a and a dynamic PIE, and the NDK has to
+carry that toolchain as well — the build says so rather than failing in the
+compiler. It has to stay 32-bit: the stack geometry `core510` stamps its fake
+waiter at is the compat one. The same artifact is also linked into the payload,
+so a run that cannot push a copy still has one. `EXP32_STAGED_PATH`
+(`core510/root.c`) is where a pushed copy is looked for, and `EXP32_LOCAL` (its
+`common.h`, overridable from the target header) is the destination it prefers
+when that destination is writable.
 
 That stage has a build lever of its own, `EXP32_CFLAGS`, kept separate from
 `EXTRA_CFLAGS` so that what it carries cannot reach the 64-bit payload:
@@ -413,8 +433,10 @@ make TARGET=quest3/global/5.10.240-g55be3759aea4 CORE=core510 \
 and one of them sits immediately before the syscall that triggers the
 prio-chain walk — with `$IONSTACK_LOG` pointing at an `O_SYNC` file, that line
 is a synchronous write inside the race window, so it is not necessarily
-decoration. It is how the stage was built for the run that reached root, and
-the built artifact is byte-identical to the one that run used.
+decoration. It is how the stage was built for the run that reached root. That
+run's stage was also `-static`, which this no longer builds; `EXP32_CFLAGS`
+takes `-static` as well for a build that is byte-identical to it. A run of the
+dynamic stage reached the same root on the same build.
 
 `P0_KERNEL_PHYS_LOAD` is the one constant the quest3 target could not measure
 from an image, and its header leaves it overridable rather than pretending
@@ -500,3 +522,14 @@ cannot check is the audit against a specific device's recovered kernel, which is
 described in [`src/kernelsu/README.md`](src/kernelsu/README.md).
 
 Use only on devices you own or are explicitly authorized to test.
+
+## Credits
+
+Each core's upstream is in the [cores](#cores) table above, and none of them is
+this repository's work. `core510` is the one this change adds:
+
+- [grayawa/IonStackQuest3](https://github.com/grayawa/IonStackQuest3) — the
+  IonStack CVE-2026-43499 work adapted to the Meta Quest 3, which `core510` is
+  imported from, and the reference this port's target was measured against.
+- Both descend from IonStack, in
+  [NebuSec/CyberMeowfia](https://github.com/NebuSec/CyberMeowfia/tree/main/IonStack/CVE-2026-43499/exploit).
