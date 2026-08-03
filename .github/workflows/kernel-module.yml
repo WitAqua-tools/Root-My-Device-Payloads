@@ -1,0 +1,266 @@
+name: build kernel-source modules
+
+# The KernelSU module for a target whose kernel a generic DDK image cannot
+# stand in for, built against the device's own source. Every other target's
+# module is built in the payload run, in the DDK container for its KMI --
+# see .github/actions/build-kernelsu.
+#
+# This is a workflow of its own rather than a job in build.yml because it takes
+# ten minutes on a tree that never changes, and the payload build runs on every
+# push. What it publishes is referenced by digest from the target's
+# kernelsu.json prebuiltModule, so the two are tied together without the
+# payload build having to rebuild a kernel to get there.
+#
+# A push or a pull request that touches any of it builds and checks. Only a
+# hand-started run with the box ticked publishes.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: one build id, or empty for all of them
+        required: false
+        default: ""
+      release:
+        description: publish the modules as a release
+        type: boolean
+        default: false
+  push:
+    branches: [main]
+    paths:
+      - src/targets/**/kernelsu.json
+      - src/targets/**/kernel.config
+      - tools/kernel/**
+      - tools/generate_feed.py
+      - .github/workflows/kernel-module.yml
+  pull_request:
+    paths:
+      - src/targets/**/kernelsu.json
+      - src/targets/**/kernel.config
+      - tools/kernel/**
+      - tools/generate_feed.py
+      - .github/workflows/kernel-module.yml
+
+permissions:
+  contents: read
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    outputs:
+      builds: ${{ steps.list.outputs.builds }}
+    steps:
+      - uses: actions/checkout@v4
+      # The same reason build.yml checks it out: a target naming a patch set
+      # that does not exist should fail in seconds, not inside a kernel build.
+      - name: Check out the patch submodule
+        run: git submodule update --init --depth 1 src/kernelsu/Root-My-Device-KSU
+      - id: list
+        env:
+          ONLY: ${{ inputs.target }}
+        run: |
+          set -euo pipefail
+          builds=$(python3 tools/generate_feed.py --emit kernel-modules)
+          if [ -n "$ONLY" ]; then
+            builds=$(jq -c --arg id "$ONLY" '[.[] | select(.id == $id)]' <<<"$builds")
+            [ "$builds" != '[]' ] || { echo "::error::no kernel-source build called '$ONLY'"; exit 1; }
+          fi
+          echo "builds=$builds" >> "$GITHUB_OUTPUT"
+          jq . <<<"$builds"
+
+  module:
+    needs: discover
+    if: needs.discover.outputs.builds != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        build: ${{ fromJson(needs.discover.outputs.builds) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          # The module's KSU_VERSION is 30000 + the KernelSU submodule's commit
+          # count, and so is the name of the patch directory this picks. A
+          # depth-1 checkout counts 1 and would build a module claiming version
+          # 30001, below the manager's MINIMAL_SUPPORTED_KERNEL of 32513.
+          fetch-depth: 0
+
+      # A kernel tree, a toolchain image and a full-ish build do not fit
+      # alongside what the runner ships with.
+      - name: Make room
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" || true
+          df -h /
+
+      # Single commit, no history: the tree is what is being built, and the
+      # 2 GB of history behind it is not. The commit and not the ref, because a
+      # branch that moves is a different kernel.
+      - name: Clone the kernel source
+        run: |
+          set -euo pipefail
+          git init -q kernel-source
+          cd kernel-source
+          git remote add origin '${{ matrix.build.repo }}'
+          git fetch -q --depth 1 origin '${{ matrix.build.commit }}'
+          git checkout -q FETCH_HEAD
+          git log --oneline -1
+          du -sh .
+
+      # The same derivation the payload build uses, for the same reason: the
+      # version comes from the pin, so the sets that apply and the tree they
+      # apply to cannot come apart, and a pin with no patches fails here.
+      - name: Apply the KernelSU patches
+        env:
+          PATCH_SETS: ${{ matrix.build.patchSets }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          version=$((30000 + $(git -C src/kernelsu/KernelSU rev-list --count HEAD)))
+          echo "KernelSU version: $version"
+          echo "KSU_VERSION=$version" >> "$GITHUB_ENV"
+          root=src/kernelsu/Root-My-Device-KSU/patches/$version
+          test -d "$root" || { echo "::error::no patches for KernelSU $version at $root"; exit 1; }
+          for set in common $PATCH_SETS; do
+            patches=("$root/$set"/*.patch)
+            test ${#patches[@]} -gt 0 || { echo "::error::patch set '$set' has no patches at $root/$set"; exit 1; }
+            for patch in "${patches[@]}"; do
+              echo "-- $set/$(basename "$patch")"
+              git -C src/kernelsu/KernelSU apply --check "$GITHUB_WORKSPACE/$patch"
+              git -C src/kernelsu/KernelSU apply "$GITHUB_WORKSPACE/$patch"
+            done
+          done
+
+      # Both container bodies live in tools/kernel/, not inline: a multi-line
+      # shell body inside a single-quoted `bash -c` in a YAML block is three
+      # levels of quoting, and it broke twice -- once on an assignment, once on
+      # an apostrophe in a comment -- each time by ending the body early and
+      # letting the outer shell run the rest.
+      - name: Prepare the kernel tree
+        run: |
+          set -euo pipefail
+          cp '${{ matrix.build.dir }}/kernel.config' kernel-source/.config
+          docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp \
+            -v "$PWD:/workspace" -w /workspace \
+            '${{ matrix.build.image }}' \
+            bash /workspace/tools/kernel/prepare-tree.sh \
+              /workspace/kernel-source '${{ matrix.build.clang }}'
+          missing=""
+          test -s kernel-source/security/selinux/flask.h || missing="$missing security/selinux/flask.h"
+          test -s kernel-source/scripts/module.lds || missing="$missing scripts/module.lds"
+          if [ -n "$missing" ]; then
+            echo "::error::the tree is not usable, missing:$missing"
+            exit 1
+          fi
+          echo "flask.h and scripts/module.lds are present; the tree is usable"
+
+      - name: Build the module
+        run: |
+          set -euo pipefail
+          docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp \
+            -e KSU_EXPECTED_SIZE2='${{ matrix.build.sigSize }}' \
+            -e KSU_EXPECTED_HASH2='${{ matrix.build.sigHash }}' \
+            -v "$PWD:/workspace" -w /workspace \
+            '${{ matrix.build.image }}' \
+            bash /workspace/tools/kernel/build-module.sh \
+              /workspace/kernel-source /workspace/src/kernelsu/KernelSU \
+              '${{ matrix.build.clang }}' '${{ matrix.build.kernelRelease }}' \
+            | tee build.log
+
+      # Everything below is what a module has to be true about itself before it
+      # is worth putting in front of a device that reboots when it is wrong.
+      # The payload build checks the first two again on what it downloads; they
+      # are here as well so a bad module never reaches a release to begin with.
+      - name: Check the module
+        run: |
+          set -euo pipefail
+          ko=src/kernelsu/KernelSU/kernel/kernelsu.ko
+          test -s "$ko"
+
+          vermagic=$(strings -a "$ko" | sed -n 's/^vermagic=//p' | head -1)
+          expected='${{ matrix.build.kernelRelease }} SMP preempt mod_unload modversions aarch64'
+          echo "vermagic: $vermagic"
+          [ "$vermagic" = "$expected" ] || {
+            echo "::error::vermagic is '$vermagic', expected '$expected'"; exit 1; }
+
+          # A non-empty __versions is a module whose CRCs are for some other
+          # kernel, and late-load resolves symbols itself.
+          size=$(readelf -SW "$ko" | sed -n 's/.*__versions *PROGBITS *[0-9a-f]* *[0-9a-f]* *\([0-9a-f]*\).*/\1/p' | head -1)
+          echo "__versions size: 0x${size:-missing}"
+          [ "${size:-}" = "000000" ] || {
+            echo "::error::__versions is not zero length"; exit 1; }
+
+          built=$(sed -n 's/^-- KernelSU version: //p' build.log | tail -1)
+          [ "$built" = "$KSU_VERSION" ] || {
+            echo "::error::built as KernelSU $built, not $KSU_VERSION"; exit 1; }
+
+          # A module built without the target's manager certificate does not
+          # reject that manager, it never finds it, and logs nothing either way.
+          if [ -n '${{ matrix.build.sigSize }}' ]; then
+            slot=$(sed -n 's/^-- KernelSU Manager signature hash2: //p' build.log | tail -1)
+            [ "$slot" = '${{ matrix.build.sigHash }}' ] || {
+              echo "::error::slot 2 is $slot, not ${{ matrix.build.sigHash }}"; exit 1; }
+            echo "manager signature slot 2: $slot"
+          fi
+
+      - name: Name the module and record its digest
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          name='kernelsu-${{ matrix.build.id }}.ko'
+          cp src/kernelsu/KernelSU/kernel/kernelsu.ko "dist/$name"
+          # The device config has debug info on, which makes the module 6 MB of
+          # which 20 KB is loaded. It is embedded in ksud and shipped to a
+          # device, so drop the sections nothing reads. Only --strip-debug: the
+          # symbol table is what late-load resolves against.
+          before=$(stat -c%s "dist/$name")
+          docker run --rm --user "$(id -u):$(id -g)" -v "$PWD/dist:/d" \
+            '${{ matrix.build.image }}' \
+            /opt/ddk/clang/${{ matrix.build.clang }}/bin/llvm-strip \
+            --strip-debug "/d/$name"
+          echo "stripped: $before -> $(stat -c%s "dist/$name") bytes"
+          ( cd dist && sha256sum "$name" > "$name.sha256" )
+          cat "dist/$name.sha256"
+          # What prebuiltModule has to say, so a run that changed the module
+          # tells you what to write rather than making you go and compute it.
+          {
+            echo '### `prebuiltModule` for `${{ matrix.build.id }}`'
+            echo '```json'
+            echo '"sha256": "'"$(cut -d' ' -f1 "dist/$name.sha256")"'"'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kernelsu-module-${{ matrix.build.id }}
+          path: dist/*
+
+  release:
+    needs: module
+    # Only ever from a hand-started run with the box ticked. A push builds and
+    # checks; it does not publish.
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.release && needs.module.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          find dist -type f | sort
+          tag="modules-$(date -u +%Y%m%d)-${GITHUB_SHA::7}"
+          # A prerelease, and never the latest one. The app resolves
+          # releases/latest and downloads every asset from that tag, so the
+          # payload releases are the only ones allowed to hold that spot -- a
+          # module release taking it would leave the app with a tag that has no
+          # feed in it.
+          gh release create "$tag" $(find dist -type f | sort) \
+            --repo "$GITHUB_REPOSITORY" \
+            --prerelease --latest=false \
+            --title "Kernel-source modules ${tag#modules-}" \
+            --notes "KernelSU modules built against a target's own kernel source, for the targets a DDK image cannot stand in for. Each .ko has its .sha256 beside it; the target's kernelsu.json references both under prebuiltModule. Not a payload release -- the application reads the payloads-* ones."

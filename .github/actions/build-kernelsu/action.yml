@@ -30,10 +30,11 @@ inputs:
     default: ""
   prebuilt-module-url:
     description: >
-      A module built elsewhere to use instead of building one here. Set for a
-      target whose kernel a generic DDK image cannot stand in for -- the
-      module is built from the device's own kernel source in
-      Root-My-Device-Kernel and published there. Empty for everything else.
+      A module built ahead of this run to use instead of building one here. Set
+      for a target whose kernel a generic DDK image cannot stand in for -- the
+      kernel-module workflow builds it from the device's own kernel source and
+      publishes it, and the target's kernelSource says how. Empty for
+      everything else.
     required: false
     default: ""
   prebuilt-module-sha256:
@@ -140,9 +141,10 @@ runs:
         "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
           "ndk;${{ inputs.ndk-version }}" > /dev/null
 
-    # A module built from the device's own kernel source, verified rather than
-    # rebuilt. It lands where the DDK build would have left one, so everything
-    # downstream -- the ksud that embeds it, the artefact names -- is unchanged.
+    # A module built from the device's own kernel source by the kernel-module
+    # workflow, verified rather than rebuilt. It lands where the DDK build would
+    # have left one, so everything downstream -- the ksud that embeds it, the
+    # artefact names -- is unchanged.
     - name: Take the prebuilt ${{ inputs.id }} module
       if: inputs.prebuilt-module-url != ''
       shell: bash

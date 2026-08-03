@@ -8,10 +8,11 @@ two halves and is the single place that knows how a target maps onto a path:
     src/targets/<device>/<region lowercased>/<kernelRelease>/
 
 Modes:
-    --emit validate   check the hand-authored sources, build nothing
-    --emit targets    the exploit build matrix
-    --emit kernelsu   the KernelSU build matrix, deduplicated by id
-    --emit feed       the targets-v2.json the app reads (needs built artifacts)
+    --emit validate        check the hand-authored sources, build nothing
+    --emit targets         the exploit build matrix
+    --emit kernelsu        the KernelSU build matrix, deduplicated by id
+    --emit kernel-modules  the matrix for the modules built from a kernel source
+    --emit feed            the targets-v2.json the app reads (needs built artifacts)
 """
 
 import argparse
@@ -58,6 +59,11 @@ DEVICE_ONLY_FIELDS = ["kernelVersion", "kernelBuildVersion"]
 PATCHES_DIR = Path("src/kernelsu/Root-My-Device-KSU/patches")
 KERNELSU_DIR = Path("src/kernelsu/KernelSU")
 KERNELSU_RELEASES_URL = "https://github.com/tiann/KernelSU/releases"
+
+# The device's own /proc/config.gz, decompressed so it can be read and diffed,
+# beside the kernelsu.json that names a kernelSource. Always this name, so it is
+# not a key anything can get wrong.
+KERNEL_CONFIG_NAME = "kernel.config"
 
 
 def git_output(repository: Path, *arguments: str) -> str | None:
@@ -252,15 +258,73 @@ def check_manager(label: str, build: dict, problems: Problems) -> None:
         problems.add(f"{label}: kernelsu.json manager.required needs a reason")
 
 
+KERNEL_SOURCE_KEYS = {"repo", "ref", "commit", "subject", "clang"}
+
+
+def check_kernel_source(label: str, build: dict, directory: Path, problems: Problems) -> None:
+    """The device's own kernel, for a target the DDK image cannot stand in for.
+
+    This is what the kernel-module workflow builds, and it is paired with
+    prebuiltModule in both directions on purpose. A kernelSource with nothing
+    referencing its result is a ten-minute build nothing consumes; a
+    prebuiltModule with no kernelSource is a URL with no recipe behind it, which
+    is what this used to be when the recipe lived in another repository.
+    """
+    source = build.get("kernelSource")
+    prebuilt = build.get("prebuiltModule")
+
+    if source is None:
+        if prebuilt is not None:
+            problems.add(
+                f"{label}: kernelsu.json names a prebuiltModule but no kernelSource, "
+                "so nothing here says how that module was built"
+            )
+        return
+    if prebuilt is None:
+        problems.add(
+            f"{label}: kernelsu.json names a kernelSource but no prebuiltModule, "
+            "so nothing would use the module it builds"
+        )
+
+    if not isinstance(source, dict):
+        problems.add(f"{label}: kernelsu.json kernelSource must be an object")
+        return
+    unknown = set(source) - KERNEL_SOURCE_KEYS - {"$comment"}
+    if unknown:
+        problems.add(f"{label}: kernelsu.json kernelSource has unknown key(s) {sorted(unknown)}")
+    missing = sorted(KERNEL_SOURCE_KEYS - set(source))
+    if missing:
+        problems.add(f"{label}: kernelsu.json kernelSource is missing {missing}")
+        return
+
+    repo = source["repo"]
+    if not isinstance(repo, str) or not repo.startswith("https://"):
+        problems.add(f"{label}: kernelSource.repo must be https, got {repo!r}")
+    # A branch that moves is a different kernel, so the commit is what is
+    # fetched and ref is only there to say where to look for it.
+    commit = source["commit"]
+    if not isinstance(commit, str) or not re.fullmatch(r"[0-9a-f]{40}", commit):
+        problems.add(f"{label}: kernelSource.commit must be a full sha, got {commit!r}")
+    for field in ("ref", "subject", "clang"):
+        if not isinstance(source[field], str) or not source[field]:
+            problems.add(f"{label}: kernelSource.{field} must be a non-empty string")
+
+    # The device's own /proc/config.gz, beside the file that names it. Not a
+    # defconfig: being close to what the device runs is the entire reason this
+    # target is not built in a DDK image.
+    if not (directory / KERNEL_CONFIG_NAME).is_file():
+        problems.add(f"{label}: kernelSource needs {directory / KERNEL_CONFIG_NAME}")
+
+
 def check_prebuilt_module(label: str, build: dict, problems: Problems) -> None:
-    """A module built somewhere else, named by digest.
+    """A module built ahead of the payload build, named by digest.
 
     A DDK image is a stand-in for a device's kernel, and for some devices it is
     not a good enough one -- close enough to build and link, not close enough to
     load. Those targets have their module built from the device's own kernel
-    source in Root-My-Device-Kernel and name the result here. The digest is not
-    optional: it is the whole difference between referencing a build and
-    trusting a URL.
+    source by the kernel-module workflow, which publishes it, and name the
+    result here. The digest is not optional: it is the whole difference between
+    referencing a build and trusting a URL.
     """
     prebuilt = build.get("prebuiltModule")
     if prebuilt is None:
@@ -416,6 +480,7 @@ def load_sources(root: Path, problems: Problems) -> list[dict]:
         check_manager(label, target["_kernelsu"], problems)
         check_manager_signature(label, target["_kernelsu"], problems)
         check_prebuilt_module(label, target["_kernelsu"], problems)
+        check_kernel_source(label, target["_kernelsu"], directory, problems)
 
         # The app matches kernelRelease and kernelBuildVersion separately but
         # both are read off the same /proc/version line. If either is not
@@ -463,6 +528,37 @@ def kernelsu_builds(targets: list[dict], problems: Problems) -> list[dict]:
     return list(builds.values())
 
 
+def kernel_module_builds(targets: list[dict]) -> list[dict]:
+    """The matrix for the kernel-module workflow: the builds that need a kernel.
+
+    Flat, and named the way the workflow reads them, so that adding a target
+    whose module has to come from source is a kernelsu.json and a config.gz and
+    no workflow change. One entry per build id, like kernelsu_builds -- the
+    disagreement between two targets describing one id differently is caught
+    there, before this runs.
+    """
+    builds: dict[str, dict] = {}
+    for target in targets:
+        kernelsu = target["_kernelsu"]
+        source = kernelsu.get("kernelSource")
+        if source is None or kernelsu["id"] in builds:
+            continue
+        signature = kernelsu.get("managerSignature") or {}
+        builds[kernelsu["id"]] = {
+            "id": kernelsu["id"],
+            "dir": str(target["_dir"]),
+            "kernelRelease": kernelsu["kernelRelease"],
+            "image": kernelsu["ddkImage"],
+            "clang": source["clang"],
+            "repo": source["repo"],
+            "commit": source["commit"],
+            "patchSets": " ".join(kernelsu.get("patchSets", [])),
+            "sigSize": signature.get("size", ""),
+            "sigHash": signature.get("hash", ""),
+        }
+    return list(builds.values())
+
+
 def report_pending(targets: list[dict]) -> None:
     for target in targets:
         if not feed_ready(target):
@@ -475,7 +571,8 @@ def report_pending(targets: list[dict]) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--emit", choices=["validate", "targets", "kernelsu", "feed"],
+    parser.add_argument("--emit",
+                        choices=["validate", "targets", "kernelsu", "kernel-modules", "feed"],
                         default="feed")
     parser.add_argument("--root", type=Path, default=Path("."))
     parser.add_argument("--exploit-dir", type=Path)
@@ -512,7 +609,8 @@ def main() -> int:
         ready = [t for t in targets if feed_ready(t)]
         print(
             f"{len(targets)} target(s) validated, {len(ready)} ready for the feed, "
-            f"{len(builds)} KernelSU build(s)"
+            f"{len(builds)} KernelSU build(s), "
+            f"{len(kernel_module_builds(targets))} of them from a kernel source"
         )
         return 0
 
@@ -534,6 +632,10 @@ def main() -> int:
 
     if args.emit == "kernelsu":
         print(json.dumps(builds, separators=(",", ":")))
+        return 0
+
+    if args.emit == "kernel-modules":
+        print(json.dumps(kernel_module_builds(targets), separators=(",", ":")))
         return 0
 
     report_pending(targets)
