@@ -206,6 +206,18 @@ jobs:
             echo "::error::built looking for $got_pkg, not ${{ matrix.build.managerPackage }}"; exit 1; }
           echo "manager: $got_pkg $got_hash"
 
+          # And that the comparison it will make is reachable. EXPECTED_HASH is
+          # only compared when the certificate is short enough to read, and the
+          # size is a constant, so a certificate over CERT_MAX_LENGTH lets the
+          # compiler drop the strcmp and its literal. The hash being in the
+          # binary is the difference between a module that can recognise this
+          # manager and one that silently never will.
+          strings -a "$ko" | grep -qxF '${{ matrix.build.sigHash }}' || {
+            echo "::error::the module does not carry the certificate hash, so it never"
+            echo "::error::reaches that comparison -- the certificate is too long to read"
+            exit 1; }
+          echo "the certificate comparison is reachable"
+
       - name: Name the module and record its digest
         run: |
           set -euo pipefail
