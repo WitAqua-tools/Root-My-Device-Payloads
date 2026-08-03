@@ -40,6 +40,9 @@ jobs:
       kernelsu_feed: ${{ steps.list.outputs.kernelsu_feed }}
       kernelsu_extra: ${{ steps.list.outputs.kernelsu_extra }}
       full: ${{ steps.list.outputs.full }}
+      manager_package: ${{ steps.list.outputs.manager_package }}
+      manager_size: ${{ steps.list.outputs.manager_size }}
+      manager_hash: ${{ steps.list.outputs.manager_hash }}
       tag: ${{ steps.list.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
@@ -115,6 +118,11 @@ jobs:
             echo "targets=$(jq -c .targets <<<"$plan")"
             echo "kernelsu_feed=$(jq -c .kernelsuFeed <<<"$plan")"
             echo "kernelsu_extra=$(jq -c .kernelsuExtra <<<"$plan")"
+            # One manager for every build, so it comes out of the plan once
+            # rather than out of each matrix entry.
+            echo "manager_package=$(jq -r .managerPackage <<<"$plan")"
+            echo "manager_size=$(jq -r .managerSignatureSize <<<"$plan")"
+            echo "manager_hash=$(jq -r .managerSignatureHash <<<"$plan")"
             # A tag that is unique per run. The app resolves releases/latest and
             # then downloads every artifact from that tag, so the set it sees
             # has to be immutable once published -- a rolling tag whose assets
@@ -226,8 +234,9 @@ jobs:
           patch-sets: ${{ join(matrix.build.patchSets, ' ') }}
           prebuilt-module-url: ${{ matrix.build.prebuiltModule.url }}
           prebuilt-module-sha256: ${{ matrix.build.prebuiltModule.sha256 }}
-          manager-signature-size: ${{ matrix.build.managerSignature.size }}
-          manager-signature-hash: ${{ matrix.build.managerSignature.hash }}
+          manager-package: ${{ needs.discover.outputs.manager_package }}
+          manager-signature-size: ${{ needs.discover.outputs.manager_size }}
+          manager-signature-hash: ${{ needs.discover.outputs.manager_hash }}
           ndk-version: ${{ env.NDK_VERSION }}
       - uses: actions/upload-artifact@v4
         with:
@@ -267,8 +276,9 @@ jobs:
           patch-sets: ${{ join(matrix.build.patchSets, ' ') }}
           prebuilt-module-url: ${{ matrix.build.prebuiltModule.url }}
           prebuilt-module-sha256: ${{ matrix.build.prebuiltModule.sha256 }}
-          manager-signature-size: ${{ matrix.build.managerSignature.size }}
-          manager-signature-hash: ${{ matrix.build.managerSignature.hash }}
+          manager-package: ${{ needs.discover.outputs.manager_package }}
+          manager-signature-size: ${{ needs.discover.outputs.manager_size }}
+          manager-signature-hash: ${{ needs.discover.outputs.manager_hash }}
           ndk-version: ${{ env.NDK_VERSION }}
       - uses: actions/upload-artifact@v4
         with:
@@ -306,6 +316,34 @@ jobs:
           # exactly as the build jobs do.
           submodules: true
           fetch-depth: 0
+
+      # The one check the two repositories cannot do for each other. The
+      # modules were built to accept exactly this package and this certificate;
+      # the APK they have to match is built and signed somewhere else, and
+      # neither side can compare strings across the gap. Both can look at the
+      # artifact, so this looks at the artifact. A mismatch here is a device
+      # that installs a manager the kernel never finds and says nothing about.
+      - name: Check the manager the feed sends people to
+        run: |
+          set -euo pipefail
+          url=$(jq -r .url src/kernelsu/manager.json)
+          want_pkg='${{ needs.discover.outputs.manager_package }}'
+          want_hash='${{ needs.discover.outputs.manager_hash }}'
+          echo "$url"
+          curl -fsSL "$url" -o manager.apk
+
+          tools=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          badging=$("$tools/aapt2" dump badging manager.apk)
+          got_pkg=$(sed -n "s/^package: name='\([^']*\)'.*/\1/p" <<<"$badging")
+          got_hash=$("$tools/apksigner" verify --print-certs manager.apk \
+                     | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')
+          echo "package: $got_pkg"
+          echo "cert:    $got_hash"
+          [ "$got_pkg" = "$want_pkg" ] || {
+            echo "::error::the manager is $got_pkg, but the modules only accept $want_pkg"; exit 1; }
+          [ "$got_hash" = "$want_hash" ] || {
+            echo "::error::the manager is signed with $got_hash, but the modules look for $want_hash"; exit 1; }
+          rm -f manager.apk
 
       - uses: actions/download-artifact@v4
         with:

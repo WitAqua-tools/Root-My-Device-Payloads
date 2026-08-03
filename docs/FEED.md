@@ -38,13 +38,28 @@ target whose `kernelVersion` is `null` still builds, but is reported and left ou
 of the feed, because the app matches on those exact strings.
 
 Each entry's `kernelsu` object also names **which KernelSU manager that module
-pairs with** — `managerVersionCode`, `managerVersionName` and `managerUrl`,
-derived from the KernelSU submodule pin exactly as `KSU_VERSION` is. The two
-carry the same number and the manager refuses a module below its own
+pairs with** — `managerPackage`, `managerVersionCode`, `managerVersionName`,
+`managerUrl`, `managerCustom` and `managerNote`. The version half is derived
+from the KernelSU submodule pin exactly as `KSU_VERSION` is: the two carry the
+same number and the manager refuses a module below its own
 `MINIMAL_SUPPORTED_KERNEL`, so which manager to install is not a matter of
-taste; publishing it with the module is what stops the app having to guess from
-a constant of its own. The three are read as optional on the app side, so a
-feed published before they existed still installs.
+taste. They are read as optional on the app side, so a feed published before
+they existed still installs.
+
+**It is the same manager in every entry**, from
+[`src/kernelsu/manager.json`](../src/kernelsu/manager.json) — which manager a
+device gets is not a property of the device. It is not upstream's, and
+`managerCustom` is therefore always true: upstream's rewrites `/data/adb/ksud`
+with the copy inside its own APK the first time it runs, which reverts the
+patches the modules here depend on. Every module is built with that file's
+`package` as `KSU_MANAGER_PACKAGE` and its `signature` as
+`KSU_EXPECTED_SIZE` / `KSU_EXPECTED_HASH` — replacing upstream's defaults
+rather than adding a second slot — so the official manager is not refused on
+such a device, it is never found. Both can be installed at once.
+
+It sits in each entry rather than at the top of the document because it
+describes what that entry's module pairs with, and a feed that some day carries
+two KernelSU builds would need it per entry anyway.
 
 Per-artifact SHA-256 fields and manifest signatures are not part of feed schema
 version 2.

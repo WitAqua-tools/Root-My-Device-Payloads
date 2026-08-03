@@ -32,6 +32,7 @@ on:
     branches: [main]
     paths:
       - src/targets/**/kernelsu.json
+      - src/kernelsu/manager.json
       - src/targets/**/kernel.config
       - src/kernelsu/KernelSU
       - src/kernelsu/Root-My-Device-KSU
@@ -157,8 +158,9 @@ jobs:
         run: |
           set -euo pipefail
           docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp \
-            -e KSU_EXPECTED_SIZE2='${{ matrix.build.sigSize }}' \
-            -e KSU_EXPECTED_HASH2='${{ matrix.build.sigHash }}' \
+            -e KSU_MANAGER_PACKAGE='${{ matrix.build.managerPackage }}' \
+            -e KSU_EXPECTED_SIZE='${{ matrix.build.sigSize }}' \
+            -e KSU_EXPECTED_HASH='${{ matrix.build.sigHash }}' \
             -v "$PWD:/workspace" -w /workspace \
             '${{ matrix.build.image }}' \
             bash /workspace/tools/kernel/build-module.sh \
@@ -193,14 +195,16 @@ jobs:
           [ "$built" = "$KSU_VERSION" ] || {
             echo "::error::built as KernelSU $built, not $KSU_VERSION"; exit 1; }
 
-          # A module built without the target's manager certificate does not
-          # reject that manager, it never finds it, and logs nothing either way.
-          if [ -n '${{ matrix.build.sigSize }}' ]; then
-            slot=$(sed -n 's/^-- KernelSU Manager signature hash2: //p' build.log | tail -1)
-            [ "$slot" = '${{ matrix.build.sigHash }}' ] || {
-              echo "::error::slot 2 is $slot, not ${{ matrix.build.sigHash }}"; exit 1; }
-            echo "manager signature slot 2: $slot"
-          fi
+          # A module looking for a different manager does not reject the right
+          # one, it never finds it, and logs nothing either way. Both halves are
+          # read back out of Kbuild's own output.
+          got_hash=$(sed -n 's/^-- KernelSU Manager signature hash: //p' build.log | tail -1)
+          [ "$got_hash" = '${{ matrix.build.sigHash }}' ] || {
+            echo "::error::built trusting $got_hash, not ${{ matrix.build.sigHash }}"; exit 1; }
+          got_pkg=$(sed -n 's/^-- KernelSU Manager package name: //p' build.log | tail -1)
+          [ "$got_pkg" = '${{ matrix.build.managerPackage }}' ] || {
+            echo "::error::built looking for $got_pkg, not ${{ matrix.build.managerPackage }}"; exit 1; }
+          echo "manager: $got_pkg $got_hash"
 
       - name: Name the module and record its digest
         run: |
