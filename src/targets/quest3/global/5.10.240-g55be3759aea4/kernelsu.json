@@ -102,8 +102,8 @@
       "certificate on top of it -- the same things it proves about a module it",
       "built itself."
     ],
-    "url": "https://github.com/WitAqua-tools/Root-My-Device-Kernel/releases/download/modules-20260802-c9a18a5/kernelsu-quest3.ko",
-    "sha256": "d0932308029dababaff03868d11cf8714212af2dfb894ef4cf00c5db291b9f51"
+    "url": "https://github.com/WitAqua-tools/Root-My-Device-Payloads/releases/download/modules-20260803-beb2806/kernelsu-quest3.ko",
+    "sha256": "79932c090275ef6b347ad03be76902c5f22430df1f2ab4ecfe3dd9026acd255c"
   },
   "manager": {
     "$comment": [
@@ -117,11 +117,12 @@
       "loses root -- so that is not a corner case, it is the normal path.",
       "",
       "This build is upstream 32525 with the common patch set applied to ksud,",
-      "from WitAqua-tools/KernelSU, and it keeps the package name so nothing",
-      "else has to change. It cannot be installed over the official manager;",
-      "that one has to be uninstalled first."
+      "built where those patches live -- WitAqua-tools/Root-My-Device-KSU. It",
+      "keeps the package name, so nothing else has to change. It cannot be",
+      "installed over the official manager; that one has to be uninstalled",
+      "first."
     ],
-    "url": "https://github.com/WitAqua-tools/KernelSU/releases/download/manager-32525-b0bc817b/KernelSU_witaqua_32525.apk",
+    "url": "https://github.com/WitAqua-tools/Root-My-Device-KSU/releases/download/manager-32525-b0bc817b/KernelSU_witaqua_32525.apk",
     "versionName": "32525 (WitAqua)",
     "versionCode": 32525,
     "required": true,
