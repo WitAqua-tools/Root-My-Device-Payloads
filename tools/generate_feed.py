@@ -9,8 +9,7 @@ two halves and is the single place that knows how a target maps onto a path:
 
 Modes:
     --emit validate        check the hand-authored sources, build nothing
-    --emit targets         the exploit build matrix
-    --emit kernelsu        the KernelSU build matrix, deduplicated by id
+    --emit plan            the build matrices, narrowed by --changed-file
     --emit kernel-modules  the matrix for the modules built from a kernel source
     --emit feed            the targets-v2.json the app reads (needs built artifacts)
 """
@@ -20,7 +19,7 @@ import json
 import re
 import subprocess
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 FEED_SCHEMA_VERSION = 2
 SOURCE_SCHEMA_VERSION = 1
@@ -528,6 +527,53 @@ def kernelsu_builds(targets: list[dict], problems: Problems) -> list[dict]:
     return list(builds.values())
 
 
+def read_changed(path: Path | None) -> list[str] | None:
+    """The changed paths to narrow a build to, or None for 'do not narrow'.
+
+    A hand-started run passes nothing and builds everything. A push passes what
+    it changed, and an empty list then means a push that touched nothing this
+    repository builds from -- which is a build of nothing, not a build of
+    everything, so it stays a list.
+    """
+    if path is None:
+        return None
+    return [line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+def affected_targets(targets: list[dict], changed: list[str]) -> list[dict] | None:
+    """The targets those changed paths can affect, or None for 'all of them'.
+
+    All of them is the default answer and not a fallback. A target's own
+    directory and its payload's are the only two places a change is provably
+    confined to; the Makefile, the tools, a workflow, a submodule pin and
+    src/targets.json can each change every artifact, and answering otherwise
+    would publish a stale one.
+
+    Every target here shares one payload and differs by core, so core is where
+    the granularity has to be: a change under src/payloads/<payload>/<core>/
+    reaches the targets on that core and no others, and one directly under the
+    payload reaches all of them.
+    """
+    payloads = {target["payload"] for target in targets}
+    selected: dict[str, dict] = {}
+    for path in changed:
+        parts = PurePosixPath(path).parts
+        if parts[:2] == ("src", "targets"):
+            hits = [t for t in targets if path.startswith(f"{t['_dir']}/")]
+        elif parts[:2] == ("src", "payloads") and len(parts) > 2 and parts[2] in payloads:
+            same_payload = [t for t in targets if t["payload"] == parts[2]]
+            cores = {t["core"] for t in same_payload}
+            if len(parts) > 3 and parts[3] in cores:
+                hits = [t for t in same_payload if t["core"] == parts[3]]
+            else:
+                hits = same_payload
+        else:
+            return None
+        for target in hits:
+            selected[target["profileId"]] = target
+    return list(selected.values())
+
+
 def kernel_module_builds(targets: list[dict]) -> list[dict]:
     """The matrix for the kernel-module workflow: the builds that need a kernel.
 
@@ -572,8 +618,11 @@ def report_pending(targets: list[dict]) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--emit",
-                        choices=["validate", "targets", "kernelsu", "kernel-modules", "feed"],
+                        choices=["validate", "plan", "kernel-modules", "feed"],
                         default="feed")
+    parser.add_argument("--changed-file", type=Path,
+                        help="file of changed paths, one per line, to narrow --emit plan to")
+    parser.add_argument("--only", help="one profileId to narrow --emit plan to, instead")
     parser.add_argument("--root", type=Path, default=Path("."))
     parser.add_argument("--exploit-dir", type=Path)
     parser.add_argument("--ksud-dir", type=Path)
@@ -614,24 +663,47 @@ def main() -> int:
         )
         return 0
 
-    if args.emit == "targets":
+    if args.emit == "plan":
+        # Narrowed or not, and both matrices, in one object -- because whether
+        # the selection is everything is what decides if a feed can be built
+        # from it at all, and that answer has to travel with the matrices
+        # rather than be re-derived from their lengths.
+        if args.only:
+            chosen = [t for t in targets if t["profileId"] == args.only]
+            if not chosen:
+                print(f"no target called {args.only!r}", file=sys.stderr)
+                return 1
+        else:
+            changed = read_changed(args.changed_file)
+            scope = None if changed is None else affected_targets(targets, changed)
+            chosen = targets if scope is None else scope
+        # Every target, however it got there. A change to a file the whole
+        # payload shares narrows to nothing in practice, and a feed can be
+        # built from that run as well as from an unnarrowed one.
+        full = len(chosen) == len(targets)
+        ids = {t["_kernelsu"]["id"] for t in chosen}
         print(json.dumps(
-            [
-                {
-                    "profileId": t["profileId"],
-                    "target": target_key(t),
-                    "payload": t["payload"],
-                    "core": t["core"],
-                    "asset": exploit_asset_name(t),
-                }
-                for t in targets
-            ],
+            {
+                "full": full,
+                "targets": [
+                    {
+                        "profileId": t["profileId"],
+                        "target": target_key(t),
+                        "payload": t["payload"],
+                        "core": t["core"],
+                        "asset": exploit_asset_name(t),
+                    }
+                    for t in chosen
+                ],
+                # Still split by whether anything publishable depends on them,
+                # and still deduplicated across every target rather than only
+                # the chosen ones, so a narrowed run builds the same module a
+                # full one would.
+                "kernelsuFeed": [b for b in builds if b["feed"] and b["id"] in ids],
+                "kernelsuExtra": [b for b in builds if not b["feed"] and b["id"] in ids],
+            },
             separators=(",", ":"),
         ))
-        return 0
-
-    if args.emit == "kernelsu":
-        print(json.dumps(builds, separators=(",", ":")))
         return 0
 
     if args.emit == "kernel-modules":
