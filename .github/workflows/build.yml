@@ -1,9 +1,11 @@
 name: build payloads
 
+# main only. A merged pull request is a push to main, so that is the one event
+# this needs; a run on the pull request itself would build the same commits
+# twice and publish neither.
 on:
   push:
     branches: [main]
-  pull_request:
   workflow_dispatch:
 
 permissions:
