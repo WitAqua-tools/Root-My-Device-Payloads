@@ -332,11 +332,24 @@ jobs:
           echo "$url"
           curl -fsSL "$url" -o manager.apk
 
-          tools=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          # A pinned build-tools, installed rather than whichever the image
+          # happens to carry: the newest one there printed no certificate at
+          # all, silently, and an empty digest read as a mismatch. This is the
+          # version the manager build uses to make the same assertion.
+          sdkmanager "build-tools;35.0.0" > /dev/null
+          tools="$ANDROID_HOME/build-tools/35.0.0"
+
           badging=$("$tools/aapt2" dump badging manager.apk)
           got_pkg=$(sed -n "s/^package: name='\([^']*\)'.*/\1/p" <<<"$badging")
-          got_hash=$("$tools/apksigner" verify --print-certs manager.apk \
-                     | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')
+
+          certs=$("$tools/apksigner" verify --print-certs manager.apk 2>&1) || {
+            echo "$certs"; echo "::error::apksigner could not read $url"; exit 1; }
+          got_hash=$(sed -n 's/.*certificate SHA-256 digest: *//p' <<<"$certs" | head -1)
+          if [ -z "$got_hash" ]; then
+            echo "$certs"
+            echo "::error::apksigner printed no certificate digest, so nothing was compared"
+            exit 1
+          fi
           echo "package: $got_pkg"
           echo "cert:    $got_hash"
           [ "$got_pkg" = "$want_pkg" ] || {
