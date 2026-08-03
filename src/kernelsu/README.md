@@ -18,6 +18,35 @@ with in its own `kernelsu.json`, and CI produces `ksud-<id>` and
 `kernelsu-<id>.ko` from this submodule as release assets. The pair is always
 published together, because `ksud` embeds the module it loads.
 
+## One manager, for every target
+
+[`manager.json`](manager.json) is the whole of it. Which manager a device gets
+is not a property of the device, so no `kernelsu.json` names one; a leftover
+`manager`, `managerSignature` or `managerPackage` key in one fails validation
+rather than being ignored.
+
+It is not upstream's manager. Upstream's rewrites `/data/adb/ksud` with the copy
+bundled in its own APK the first time it runs, which puts an unpatched daemon
+back — measured on Quest 3, where opening it undid `common/0004` and the next
+soft restart went back to leaving stale daemons behind, with nothing in any log
+to say so. A soft restart is the only restart a late-loaded device has.
+
+So every module here is built with that file's `package` as
+`KSU_MANAGER_PACKAGE` and its `signature` as `KSU_EXPECTED_SIZE` /
+`KSU_EXPECTED_HASH`. Those two are upstream's own defaults in `kernel/Kbuild`,
+**replaced rather than added to**, so nothing is left holding upstream's
+certificate: `is_manager_apk()` never returns true for the official manager, it
+is never found, and a manager the kernel does not recognise cannot rewrite
+`ksud`. The package names differ, so both can be installed at once.
+
+The APK itself is built by
+[Root-My-Device-KSU](https://github.com/Witaqua-tools/Root-My-Device-KSU),
+beside the patches that make it ours. Neither repository can check the other's
+strings, so both check the artifact: that build asserts the package and the
+certificate against what it actually signed, and the `feed` job here downloads
+the published APK and asserts them again against what the modules were built
+with.
+
 ## Which patches a build gets
 
 The patches are keyed by the upstream version they were written against:

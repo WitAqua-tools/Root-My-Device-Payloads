@@ -7,9 +7,11 @@
 #   $3  clang directory name inside /opt/ddk/clang
 #   $4  the release the module must claim
 #
-# KSU_EXPECTED_SIZE2 / KSU_EXPECTED_HASH2 are read from the environment when
-# set; Kbuild errors out if only one half is, so an empty pair is unset rather
-# than passed through empty.
+# KSU_MANAGER_PACKAGE and KSU_EXPECTED_SIZE / KSU_EXPECTED_HASH come from the
+# environment, which is where make reads them from too. The certificate pair
+# has upstream's own values as defaults in Kbuild, so setting it replaces those
+# rather than adding a second slot: the module accepts one manager, and it is
+# not the official one.
 set -eu
 
 tree=$1
@@ -35,11 +37,7 @@ printf '%s\n' "$release" > "$tree/include/config/kernel.release"
 # Module.symvers in place would make modpost emit CRCs instead.
 : > "$tree/Module.symvers"
 
-if [ -z "${KSU_EXPECTED_SIZE2:-}" ]; then
-  unset KSU_EXPECTED_SIZE2 KSU_EXPECTED_HASH2 || true
-else
-  echo "manager signature slot 2: $KSU_EXPECTED_SIZE2 ${KSU_EXPECTED_HASH2:-}"
-fi
+echo "manager: ${KSU_MANAGER_PACKAGE:-<unset>} ${KSU_EXPECTED_SIZE:-<default>} ${KSU_EXPECTED_HASH:-<default>}"
 
 cd "$kernelsu/kernel"
 make -C "$tree" M="$PWD" src="$PWD" \

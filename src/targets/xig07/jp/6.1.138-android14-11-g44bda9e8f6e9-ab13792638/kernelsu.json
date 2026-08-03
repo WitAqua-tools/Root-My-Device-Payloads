@@ -34,6 +34,5 @@
   "ddkImage": "ghcr.io/ylarod/ddk-min:android14-6.1-20260313",
   "kernelRelease": "6.1.138-android14-11-g44bda9e8f6e9-ab13792638",
   "patchSets": [],
-  "config": [],
-  "managerPackage": "me.weishu.kernelsu"
+  "config": []
 }

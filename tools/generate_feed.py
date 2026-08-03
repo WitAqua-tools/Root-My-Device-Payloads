@@ -57,7 +57,11 @@ DEVICE_ONLY_FIELDS = ["kernelVersion", "kernelBuildVersion"]
 # patch_sets_dir for where the version comes from.
 PATCHES_DIR = Path("src/kernelsu/Root-My-Device-KSU/patches")
 KERNELSU_DIR = Path("src/kernelsu/KernelSU")
-KERNELSU_RELEASES_URL = "https://github.com/tiann/KernelSU/releases"
+
+# The one manager every target pairs with. Not a per-target choice: which
+# manager a device gets is not a property of the device, and the modules are
+# built to accept this one and no other.
+MANAGER_FILE = Path("src/kernelsu/manager.json")
 
 # The device's own /proc/config.gz, decompressed so it can be read and diffed,
 # beside the kernelsu.json that names a kernelSource. Always this name, so it is
@@ -125,67 +129,35 @@ def kernelsu_version(root: Path) -> int | None:
     return 30000 + int(count)
 
 
+def manager(root: Path) -> dict:
+    """src/kernelsu/manager.json, as written."""
+    return json.loads((root / MANAGER_FILE).read_text(encoding="utf-8"))
+
+
 def kernelsu_manager(root: Path) -> dict | None:
-    """Which KernelSU manager the module pairs with, and where to get it.
+    """What the feed says about the manager, for every entry.
 
-    The module and the manager carry the same number -- the manager shows the
-    pair on its home screen as `<version>-<uapi>` -- and it refuses a module
-    below its own MINIMAL_SUPPORTED_KERNEL. So which manager a build wants is
-    not a matter of taste, and the app should not have to guess it from a
-    constant compiled into itself: it is a property of the pin, and it travels
-    in the feed with everything else that is.
+    It belongs beside the module in each entry rather than at the top of the
+    document, because it describes what that module pairs with, and a feed that
+    some day carries two KernelSU builds would need it per entry anyway.
 
-    The download points at the release asset when the pin is exactly a tag,
-    because that is the only case where the file name is knowable. Off a tag it
-    points at the releases page, which is still somewhere to go.
+    None when the pinned version cannot be read, because the version is half of
+    what the manager is.
     """
     version = kernelsu_version(root)
-    kernelsu = kernelsu_repo(root)
-    if version is None or kernelsu is None:
+    if version is None:
         return None
-    tag = git_output(kernelsu, "describe", "--tags", "--exact-match")
-    name = tag or git_output(kernelsu, "describe", "--tags", "--always")
-    url = (
-        f"{KERNELSU_RELEASES_URL}/download/{tag}/KernelSU_{tag}_{version}-release.apk"
-        if tag
-        else KERNELSU_RELEASES_URL
-    )
+    document = manager(root)
     return {
+        "managerPackage": document["package"],
         "managerVersionCode": version,
-        "managerVersionName": name or str(version),
-        "managerUrl": url,
+        "managerVersionName": f"{version} ({document['name']})",
+        "managerUrl": document["url"],
+        # Always. There is no build here that pairs with upstream's manager,
+        # so the application has nothing to decide and every entry says so.
+        "managerCustom": True,
+        "managerNote": document["note"],
     }
-
-
-MANAGER_KEYS = {
-    "url": "managerUrl",
-    "versionName": "managerVersionName",
-    "versionCode": "managerVersionCode",
-}
-
-
-def build_manager(build: dict) -> dict:
-    """A manager this build needs instead of the one its pin implies.
-
-    The pinned KernelSU decides which upstream manager a module pairs with, and
-    for most targets that is the whole answer. It is not the answer for a target
-    whose ksud carries patches: the manager rewrites /data/adb/ksud with the
-    copy bundled in its own APK the first time it runs, so the official one
-    silently puts an unpatched daemon back. Such a target names a manager built
-    with those patches in it, and says so, because installing that manager is
-    then part of the install rather than an upgrade someone can skip -- and
-    because a manager built elsewhere is signed elsewhere, which is a thing a
-    user is entitled to be told before they are sent to it.
-    """
-    override = build.get("manager")
-    if not override:
-        return {}
-    fields = {out: override[key] for key, out in MANAGER_KEYS.items() if key in override}
-    if override.get("required"):
-        fields["managerCustom"] = True
-    if override.get("reason"):
-        fields["managerNote"] = override["reason"]
-    return fields
 
 
 def patch_sets_dir(root: Path) -> Path | None:
@@ -230,31 +202,63 @@ def exploit_asset_name(target: dict) -> str:
     return f"{target['payload'].lower()}-app-{target['profileId']}.so"
 
 
-def check_manager(label: str, build: dict, problems: Problems) -> None:
-    override = build.get("manager")
-    if override is None:
+def check_manager_file(root: Path, problems: Problems) -> None:
+    """The one manager, and whether it is the one the pin implies.
+
+    The manager and the module carry the same number and the manager refuses a
+    module below its own MINIMAL_SUPPORTED_KERNEL, so a pin move that is not
+    followed by a manager release leaves the feed sending people to a manager
+    that will not talk to what they just installed. The version is not written
+    in the file -- it is derived from the pin like everywhere else -- so the one
+    thing that can disagree is the URL, and that is what is checked.
+    """
+    label = str(MANAGER_FILE)
+    try:
+        document = manager(root)
+    except (OSError, ValueError) as error:
+        problems.add(f"{label}: cannot be read ({error})")
         return
-    if not isinstance(override, dict):
-        problems.add(f"{label}: kernelsu.json manager must be an object")
-        return
-    unknown = set(override) - set(MANAGER_KEYS) - {"required", "reason", "$comment"}
+
+    unknown = set(document) - {"package", "name", "url", "note", "signature", "$comment"}
     if unknown:
-        problems.add(f"{label}: kernelsu.json manager has unknown key(s) {sorted(unknown)}")
-    # A manager entry that names no download is worse than none: the app would
-    # keep pointing at upstream's while the target claims it needs another.
-    if not override.get("url"):
-        problems.add(f"{label}: kernelsu.json manager needs a url")
-    if "versionCode" in override and not isinstance(override["versionCode"], int):
-        problems.add(f"{label}: kernelsu.json manager.versionCode must be an integer")
-    for key in ("versionName", "reason"):
-        if key in override and not isinstance(override[key], str):
-            problems.add(f"{label}: kernelsu.json manager.{key} must be a string")
-    if "required" in override and not isinstance(override["required"], bool):
-        problems.add(f"{label}: kernelsu.json manager.required must be a boolean")
-    # Saying a manager is required without saying why leaves the app with a
-    # warning it cannot explain, on a screen where the next step is a download.
-    if override.get("required") and not override.get("reason"):
-        problems.add(f"{label}: kernelsu.json manager.required needs a reason")
+        problems.add(f"{label}: unknown key(s) {sorted(unknown)}")
+    for field in ("package", "name", "url", "note"):
+        if not isinstance(document.get(field), str) or not document[field]:
+            problems.add(f"{label}: {field} must be a non-empty string")
+    url = document.get("url")
+    if isinstance(url, str) and not url.startswith("https://"):
+        problems.add(f"{label}: url must be https, got {url!r}")
+
+    signature = document.get("signature")
+    if not isinstance(signature, dict) or set(signature) - {"size", "hash"}:
+        problems.add(f"{label}: signature must be an object of size and hash")
+    else:
+        if not re.fullmatch(r"0x[0-9a-f]{4}", str(signature.get("size"))):
+            problems.add(f"{label}: signature.size must look like 0x0524, got {signature.get('size')!r}")
+        if not re.fullmatch(r"[0-9a-f]{64}", str(signature.get("hash"))):
+            problems.add(f"{label}: signature.hash must be a lowercase sha256")
+
+    version = kernelsu_version(root)
+    if version is not None and isinstance(url, str) and str(version) not in url:
+        problems.add(
+            f"{label}: url does not mention KernelSU {version}, which the pin says "
+            "the modules will be; release a manager from Root-My-Device-KSU first"
+        )
+
+
+def check_no_target_manager(label: str, build: dict, problems: Problems) -> None:
+    """A kernelsu.json that still picks its own manager.
+
+    It used to. There is one manager now and it is not a property of a target,
+    so a leftover key here is not a thing to ignore -- it is someone's intent
+    that would silently not happen.
+    """
+    stale = {"manager", "managerSignature", "managerPackage"} & set(build)
+    if stale:
+        problems.add(
+            f"{label}: kernelsu.json still has {sorted(stale)}; the manager is "
+            f"one file now, {MANAGER_FILE}"
+        )
 
 
 KERNEL_SOURCE_KEYS = {"repo", "ref", "commit", "subject", "clang"}
@@ -336,35 +340,6 @@ def check_prebuilt_module(label: str, build: dict, problems: Problems) -> None:
         problems.add(f"{label}: prebuiltModule.url must be https, got {url!r}")
     if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
         problems.add(f"{label}: prebuiltModule.sha256 must be a lowercase sha256, got {digest!r}")
-
-
-def check_manager_signature(label: str, build: dict, problems: Problems) -> None:
-    """The certificate this build's module is told to accept as a manager.
-
-    KernelSU's module picks its manager by hashing the APK's v2 signing
-    certificate against a size and hash compiled in. A manager built anywhere
-    but upstream is signed anywhere but upstream, so a module that does not
-    carry that certificate in one of its two slots does not see it -- and says
-    nothing about why. The pair is not a secret; it is recorded here so the
-    module and the APK cannot come apart, and so the build fails rather than
-    the device going quiet.
-    """
-    signature = build.get("managerSignature")
-    if signature is None:
-        if build.get("manager"):
-            problems.add(
-                f"{label}: kernelsu.json names a manager of its own but no "
-                "managerSignature, so the module it builds would not recognise it"
-            )
-        return
-    if not isinstance(signature, dict) or set(signature) - {"size", "hash", "$comment"}:
-        problems.add(f"{label}: kernelsu.json managerSignature must be an object of size and hash")
-        return
-    size, digest = signature.get("size"), signature.get("hash")
-    if not isinstance(size, str) or not re.fullmatch(r"0x[0-9a-f]{4}", size):
-        problems.add(f"{label}: managerSignature.size must look like 0x0524, got {size!r}")
-    if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
-        problems.add(f"{label}: managerSignature.hash must be a lowercase sha256, got {digest!r}")
 
 
 def ksud_asset_name(build_id: str) -> str:
@@ -476,8 +451,7 @@ def load_sources(root: Path, problems: Problems) -> list[dict]:
         target["_kernelsu"] = json.loads(kernelsu_path.read_text(encoding="utf-8"))
         target["_dir"] = directory
         check_patch_sets(root, label, target["_kernelsu"], problems)
-        check_manager(label, target["_kernelsu"], problems)
-        check_manager_signature(label, target["_kernelsu"], problems)
+        check_no_target_manager(label, target["_kernelsu"], problems)
         check_prebuilt_module(label, target["_kernelsu"], problems)
         check_kernel_source(label, target["_kernelsu"], directory, problems)
 
@@ -574,7 +548,7 @@ def affected_targets(targets: list[dict], changed: list[str]) -> list[dict] | No
     return list(selected.values())
 
 
-def kernel_module_builds(targets: list[dict]) -> list[dict]:
+def kernel_module_builds(root: Path, targets: list[dict]) -> list[dict]:
     """The matrix for the kernel-module workflow: the builds that need a kernel.
 
     Flat, and named the way the workflow reads them, so that adding a target
@@ -583,13 +557,13 @@ def kernel_module_builds(targets: list[dict]) -> list[dict]:
     disagreement between two targets describing one id differently is caught
     there, before this runs.
     """
+    document = manager(root)
     builds: dict[str, dict] = {}
     for target in targets:
         kernelsu = target["_kernelsu"]
         source = kernelsu.get("kernelSource")
         if source is None or kernelsu["id"] in builds:
             continue
-        signature = kernelsu.get("managerSignature") or {}
         builds[kernelsu["id"]] = {
             "id": kernelsu["id"],
             "dir": str(target["_dir"]),
@@ -599,8 +573,9 @@ def kernel_module_builds(targets: list[dict]) -> list[dict]:
             "repo": source["repo"],
             "commit": source["commit"],
             "patchSets": " ".join(kernelsu.get("patchSets", [])),
-            "sigSize": signature.get("size", ""),
-            "sigHash": signature.get("hash", ""),
+            "managerPackage": document["package"],
+            "sigSize": document["signature"]["size"],
+            "sigHash": document["signature"]["hash"],
         }
     return list(builds.values())
 
@@ -638,6 +613,7 @@ def main() -> int:
             parser.error(f"{', '.join(missing)} are required for --emit feed")
 
     problems = Problems()
+    check_manager_file(args.root, problems)
     targets = load_sources(args.root, problems)
     if not targets and not problems:
         problems.add("src/targets.json declares no targets")
@@ -659,7 +635,7 @@ def main() -> int:
         print(
             f"{len(targets)} target(s) validated, {len(ready)} ready for the feed, "
             f"{len(builds)} KernelSU build(s), "
-            f"{len(kernel_module_builds(targets))} of them from a kernel source"
+            f"{len(kernel_module_builds(args.root, targets))} of them from a kernel source"
         )
         return 0
 
@@ -682,9 +658,15 @@ def main() -> int:
         # built from that run as well as from an unnarrowed one.
         full = len(chosen) == len(targets)
         ids = {t["_kernelsu"]["id"] for t in chosen}
+        document = manager(args.root)
         print(json.dumps(
             {
                 "full": full,
+                # One manager, so it is not in either matrix: the workflow reads
+                # it once and passes the same three values to every build.
+                "managerPackage": document["package"],
+                "managerSignatureSize": document["signature"]["size"],
+                "managerSignatureHash": document["signature"]["hash"],
                 "targets": [
                     {
                         "profileId": t["profileId"],
@@ -707,7 +689,7 @@ def main() -> int:
         return 0
 
     if args.emit == "kernel-modules":
-        print(json.dumps(kernel_module_builds(targets), separators=(",", ":")))
+        print(json.dumps(kernel_module_builds(args.root, targets), separators=(",", ":")))
         return 0
 
     report_pending(targets)
@@ -716,8 +698,8 @@ def main() -> int:
     # module in each entry rather than at the top of the document, because it
     # describes what that module pairs with, and a feed that some day carries
     # two KernelSU builds would need it per entry anyway.
-    manager = kernelsu_manager(args.root)
-    if manager is None:
+    feed_manager = kernelsu_manager(args.root)
+    if feed_manager is None:
         # A feed with no entries is a valid thing to publish while every port
         # is still in progress, and it names no module, so it needs no manager
         # either. Only an entry does.
@@ -729,11 +711,11 @@ def main() -> int:
                 file=sys.stderr,
             )
             return 1
-        manager = {}
+        feed_manager = {}
     else:
         print(
-            f"KernelSU manager: {manager['managerVersionName']} "
-            f"({manager['managerVersionCode']}) -> {manager['managerUrl']}"
+            f"KernelSU manager: {feed_manager['managerVersionName']} "
+            f"({feed_manager['managerVersionCode']}) -> {feed_manager['managerUrl']}"
         )
 
     entries = []
@@ -764,8 +746,7 @@ def main() -> int:
             "url": download_url(args.repository, args.tag, ksud_name),
             "size": ksud.stat().st_size,
             "kmi": build["kmi"],
-            "managerPackage": build["managerPackage"],
-        } | manager | build_manager(build)
+        } | feed_manager
         entries.append(entry)
 
     if problems:

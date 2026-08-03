@@ -62,7 +62,6 @@
   "kernelRelease": "5.10.240-g55be3759aea4",
   "patchSets": ["devices/quest3"],
   "config": [],
-  "managerPackage": "me.weishu.kernelsu",
   "kernelSource": {
     "$comment": [
       "The kernel this module is built against: Meta's own source for this",
@@ -98,46 +97,10 @@
       "everything else uses.",
       "",
       "The digest is what makes this a reference to a build rather than trust",
-      "in a URL, and the action checks vermagic, __versions and the manager",
-      "certificate on top of it -- the same things it proves about a module it",
-      "built itself."
+      "in a URL, and the action checks vermagic and __versions on top of it --",
+      "the same things it proves about a module it built itself."
     ],
     "url": "https://github.com/WitAqua-tools/Root-My-Device-Payloads/releases/download/modules-20260803-beb2806/kernelsu-quest3.ko",
     "sha256": "79932c090275ef6b347ad03be76902c5f22430df1f2ab4ecfe3dd9026acd255c"
-  },
-  "manager": {
-    "$comment": [
-      "The official manager cannot be used here. It rewrites /data/adb/ksud",
-      "with the copy bundled in its own APK the first time it runs, which puts",
-      "an unpatched daemon back: measured on this device, opening it undid",
-      "common/0004 and the next soft restart went back to leaving stale lspd",
-      "and sui behind. Nothing in the log says the daemon was replaced.",
-      "",
-      "A soft restart is the only restart this target has -- a real reboot",
-      "loses root -- so that is not a corner case, it is the normal path.",
-      "",
-      "This build is upstream 32525 with the common patch set applied to ksud,",
-      "built where those patches live -- WitAqua-tools/Root-My-Device-KSU. It",
-      "keeps the package name, so nothing else has to change. It cannot be",
-      "installed over the official manager; that one has to be uninstalled",
-      "first."
-    ],
-    "url": "https://github.com/WitAqua-tools/Root-My-Device-KSU/releases/download/manager-32525-b0bc817b/KernelSU_witaqua_32525.apk",
-    "versionName": "32525 (WitAqua)",
-    "versionCode": 32525,
-    "required": true,
-    "reason": "The official manager replaces ksud with its own copy and undoes the fix that keeps modules working across a soft restart, which is the only restart this device has."
-  },
-  "managerSignature": {
-    "$comment": [
-      "The certificate the module accepts as a manager, in its second slot --",
-      "KSU_EXPECTED_SIZE2 / KSU_EXPECTED_HASH2. Upstream's stays in the first,",
-      "so a module built from this still recognises the official manager too.",
-      "Without this the manager above is simply not seen, with nothing logged.",
-      "The pair is the DER size and sha256 of Android-Keys/kernelsu-manager,",
-      "and it is not a secret."
-    ],
-    "size": "0x0524",
-    "hash": "a66068cd6cc875e8d43334d1bf70eadd0ab8ad6096d8d004e39e7b6a87cdf6f0"
   }
 }

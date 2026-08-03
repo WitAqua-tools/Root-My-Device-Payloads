@@ -25,6 +25,5 @@
   "ddkImage": "ghcr.io/ylarod/ddk-min:android16-6.12-20260313",
   "kernelRelease": "6.12.38-android16-5-g1d46253471dd-ab15048002-4k",
   "patchSets": [],
-  "config": [],
-  "managerPackage": "me.weishu.kernelsu"
+  "config": []
 }
