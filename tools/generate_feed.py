@@ -63,6 +63,14 @@ KERNELSU_DIR = Path("src/kernelsu/KernelSU")
 # built to accept this one and no other.
 MANAGER_FILE = Path("src/kernelsu/manager.json")
 
+# What the module can physically read. kernel/manager/apk_sign.c reads the
+# manager certificate into a fixed 1024-byte buffer before hashing it, and
+# refuses anything longer -- so a longer certificate is never compared against
+# the hash at all, and on a device that is is_manager: 0 and nothing else. The
+# first key used here was RSA-4096 at 1316 bytes and no module ever recognised
+# the manager it signed.
+CERT_MAX_LENGTH = 1024
+
 # The device's own /proc/config.gz, decompressed so it can be read and diffed,
 # beside the kernelsu.json that names a kernelSource. Always this name, so it is
 # not a key anything can get wrong.
@@ -233,8 +241,15 @@ def check_manager_file(root: Path, problems: Problems) -> None:
     if not isinstance(signature, dict) or set(signature) - {"size", "hash"}:
         problems.add(f"{label}: signature must be an object of size and hash")
     else:
-        if not re.fullmatch(r"0x[0-9a-f]{4}", str(signature.get("size"))):
-            problems.add(f"{label}: signature.size must look like 0x0524, got {signature.get('size')!r}")
+        size = str(signature.get("size"))
+        if not re.fullmatch(r"0x[0-9a-f]{4}", size):
+            problems.add(f"{label}: signature.size must look like 0x0324, got {signature.get('size')!r}")
+        elif int(size, 16) > CERT_MAX_LENGTH:
+            problems.add(
+                f"{label}: signature.size is {int(size, 16)} bytes, past the "
+                f"{CERT_MAX_LENGTH} a module can read; no module would ever "
+                "recognise a manager signed with that certificate"
+            )
         if not re.fullmatch(r"[0-9a-f]{64}", str(signature.get("hash"))):
             problems.add(f"{label}: signature.hash must be a lowercase sha256")
 

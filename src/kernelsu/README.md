@@ -39,6 +39,14 @@ certificate: `is_manager_apk()` never returns true for the official manager, it
 is never found, and a manager the kernel does not recognise cannot rewrite
 `ksud`. The package names differ, so both can be installed at once.
 
+`signature.size` has a ceiling. `apk_sign.c` reads the certificate into a
+1024-byte buffer before hashing it and refuses anything longer, so a longer one
+is never compared against the hash at all — which on a device is
+`is_manager: 0` and nothing else. The first key used here was RSA-4096 at 1316
+bytes and **no module ever recognised the manager it signed**; it is RSA-2048
+and 804 bytes now, against upstream's own 827. `generate_feed.py` rejects a
+pair past the limit rather than letting it reach a device.
+
 The APK itself is built by
 [Root-My-Device-KSU](https://github.com/Witaqua-tools/Root-My-Device-KSU),
 beside the patches that make it ours. Neither repository can check the other's
