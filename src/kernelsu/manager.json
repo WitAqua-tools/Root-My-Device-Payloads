@@ -33,14 +33,22 @@
     "Android-Keys/kernelsu-manager. It is not a secret. The build that produces",
     "the APK asserts the same pair against what it actually signed, and the feed",
     "job here downloads the APK and asserts it again -- the two repositories",
-    "cannot compare strings across the gap, but they can both check the artifact."
+    "cannot compare strings across the gap, but they can both check the artifact.",
+    "",
+    "size has a ceiling, and it is not a matter of taste. apk_sign.c reads the",
+    "certificate into a 1024-byte buffer before hashing it and refuses anything",
+    "longer, so a certificate past that is never compared against this hash at",
+    "all -- which on a device is is_manager: 0 and nothing else. The first key",
+    "here was RSA-4096 at 1316 bytes and no module ever recognised the manager",
+    "it signed. RSA-2048 gives 804, against upstream's own 827. Validation",
+    "rejects anything past the limit rather than letting it reach a device."
   ],
   "package": "org.witaqua.pwn.kernelsu",
   "name": "Root My Device KSU",
-  "url": "https://github.com/WitAqua-tools/Root-My-Device-KSU/releases/download/manager-32525-d097d93/RootMyDeviceKSU_32525.apk",
+  "url": "https://github.com/WitAqua-tools/Root-My-Device-KSU/releases/download/manager-32525-1192bf5/RootMyDeviceKSU_32525.apk",
   "note": "The official KernelSU manager replaces ksud with its own copy and undoes the fix that keeps modules working across a soft restart, which is the only restart this device has. The module accepts this manager and no other.",
   "signature": {
-    "size": "0x0524",
-    "hash": "a66068cd6cc875e8d43334d1bf70eadd0ab8ad6096d8d004e39e7b6a87cdf6f0"
+    "size": "0x0324",
+    "hash": "892ea55bd3eeca03d97d52e73c3c16cb3e0ad13f571cdbce8394035249b57002"
   }
 }
