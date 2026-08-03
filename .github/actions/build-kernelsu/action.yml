@@ -173,12 +173,18 @@ runs:
           echo "::error::the module has no __versions section"; exit 1
         fi
 
-        # Not checked here: which certificates the module accepts as a
-        # manager. Kbuild folds EXPECTED_HASH into bytes at compile time, so
-        # the hex is not in the binary to look for -- confirmed against a
-        # module known to carry it. The producing build reads the pair back out
-        # of Kbuild's own output, and the digest above is what ties this file
-        # to that build.
+        # The manager package, which does survive into the binary: Kbuild
+        # passes it as a string literal for strncmp() to compare against. The
+        # certificate does not -- EXPECTED_HASH is folded into bytes at compile
+        # time, confirmed against a module known to carry it -- so that half is
+        # covered by the producing build reading it back out of Kbuild's own
+        # output, and by the digest above tying this file to that build.
+        if ! strings -a "$ko" | grep -qxF '${{ inputs.manager-package }}'; then
+          echo "::error::the module does not name ${{ inputs.manager-package }} as its manager,"
+          echo "::error::so it was built before that was pinned; rebuild and publish it"
+          exit 1
+        fi
+        echo "manager package: ${{ inputs.manager-package }}"
 
     - name: Build the ${{ inputs.id }} kernel module
       if: inputs.prebuilt-module-url == ''

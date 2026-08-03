@@ -97,10 +97,14 @@
       "everything else uses.",
       "",
       "The digest is what makes this a reference to a build rather than trust",
-      "in a URL, and the action checks vermagic and __versions on top of it --",
-      "the same things it proves about a module it built itself."
+      "in a URL, and the action checks vermagic, __versions and the manager",
+      "package on top of it -- the same things it proves about a module it",
+      "built itself. Not the certificate: Kbuild folds EXPECTED_HASH into bytes",
+      "at compile time, so the hex is not in the binary to look for. The",
+      "package survives as a string, because KSU_MANAGER_PACKAGE reaches the",
+      "compiler as a string literal that strncmp() then compares against."
     ],
-    "url": "https://github.com/WitAqua-tools/Root-My-Device-Payloads/releases/download/modules-20260803-beb2806/kernelsu-quest3.ko",
-    "sha256": "79932c090275ef6b347ad03be76902c5f22430df1f2ab4ecfe3dd9026acd255c"
+    "url": "https://github.com/WitAqua-tools/Root-My-Device-Payloads/releases/download/modules-20260803-79dd391/kernelsu-quest3.ko",
+    "sha256": "3ad6692e2410dbb9b2495367ea2c4e649bfdc34d2d445e8011e9a1d6f6214d0d"
   }
 }
