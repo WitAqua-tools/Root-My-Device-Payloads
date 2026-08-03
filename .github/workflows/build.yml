@@ -336,8 +336,12 @@ jobs:
           # happens to carry: the newest one there printed no certificate at
           # all, silently, and an empty digest read as a mismatch. This is the
           # version the manager build uses to make the same assertion.
-          sdkmanager "build-tools;35.0.0" > /dev/null
+          # By full path, the way every other job here installs something:
+          # this one sets up no SDK, so nothing has put sdkmanager on PATH.
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "build-tools;35.0.0" > /dev/null
           tools="$ANDROID_HOME/build-tools/35.0.0"
+          test -x "$tools/apksigner" || { echo "::error::no apksigner in $tools"; exit 1; }
 
           badging=$("$tools/aapt2" dump badging manager.apk)
           got_pkg=$(sed -n "s/^package: name='\([^']*\)'.*/\1/p" <<<"$badging")
