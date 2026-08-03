@@ -944,7 +944,21 @@ static int payload_runner_main(int argc, char **argv) {
     return errno ? errno : ESRCH;
   }
 
-  int log_fd = open(argv[4], O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
+  /*
+   * O_SYNC, because the interesting runs are the ones that do not come back.
+   *
+   * A missed reclaim can panic the kernel, and on a device with no pstore the
+   * reboot is instant and silent: everything this log had in the page cache is
+   * simply gone, and the file is zero bytes on the next boot. That happened on
+   * Quest 3 -- a run that had leaked the kernel base and the mm_struct left an
+   * empty log, and all that could be said afterwards was "it rebooted".
+   *
+   * The application reads this file to show the run, so the cost is one
+   * synchronous write per payload log line, which is what the standalone route
+   * has always paid ($IONSTACK_LOG opens its log the same way).
+   */
+  int log_fd =
+      open(argv[4], O_WRONLY | O_CREAT | O_TRUNC | O_SYNC | O_CLOEXEC, 0600);
   if (log_fd < 0 || dup2(log_fd, STDOUT_FILENO) < 0 ||
       dup2(log_fd, STDERR_FILENO) < 0) {
     return errno ? errno : EIO;

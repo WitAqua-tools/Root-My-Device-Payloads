@@ -8,14 +8,16 @@ two halves and is the single place that knows how a target maps onto a path:
     src/targets/<device>/<region lowercased>/<kernelRelease>/
 
 Modes:
-    --emit validate   check the hand-authored sources, build nothing
-    --emit targets    the exploit build matrix
-    --emit kernelsu   the KernelSU build matrix, deduplicated by id
-    --emit feed       the targets-v2.json the app reads (needs built artifacts)
+    --emit validate        check the hand-authored sources, build nothing
+    --emit targets         the exploit build matrix
+    --emit kernelsu        the KernelSU build matrix, deduplicated by id
+    --emit kernel-modules  the matrix for the modules built from a kernel source
+    --emit feed            the targets-v2.json the app reads (needs built artifacts)
 """
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -57,6 +59,11 @@ DEVICE_ONLY_FIELDS = ["kernelVersion", "kernelBuildVersion"]
 PATCHES_DIR = Path("src/kernelsu/Root-My-Device-KSU/patches")
 KERNELSU_DIR = Path("src/kernelsu/KernelSU")
 KERNELSU_RELEASES_URL = "https://github.com/tiann/KernelSU/releases"
+
+# The device's own /proc/config.gz, decompressed so it can be read and diffed,
+# beside the kernelsu.json that names a kernelSource. Always this name, so it is
+# not a key anything can get wrong.
+KERNEL_CONFIG_NAME = "kernel.config"
 
 
 def git_output(repository: Path, *arguments: str) -> str | None:
@@ -151,6 +158,37 @@ def kernelsu_manager(root: Path) -> dict | None:
     }
 
 
+MANAGER_KEYS = {
+    "url": "managerUrl",
+    "versionName": "managerVersionName",
+    "versionCode": "managerVersionCode",
+}
+
+
+def build_manager(build: dict) -> dict:
+    """A manager this build needs instead of the one its pin implies.
+
+    The pinned KernelSU decides which upstream manager a module pairs with, and
+    for most targets that is the whole answer. It is not the answer for a target
+    whose ksud carries patches: the manager rewrites /data/adb/ksud with the
+    copy bundled in its own APK the first time it runs, so the official one
+    silently puts an unpatched daemon back. Such a target names a manager built
+    with those patches in it, and says so, because installing that manager is
+    then part of the install rather than an upgrade someone can skip -- and
+    because a manager built elsewhere is signed elsewhere, which is a thing a
+    user is entitled to be told before they are sent to it.
+    """
+    override = build.get("manager")
+    if not override:
+        return {}
+    fields = {out: override[key] for key, out in MANAGER_KEYS.items() if key in override}
+    if override.get("required"):
+        fields["managerCustom"] = True
+    if override.get("reason"):
+        fields["managerNote"] = override["reason"]
+    return fields
+
+
 def patch_sets_dir(root: Path) -> Path | None:
     """patches/<version> for the pinned KernelSU, or None if it cannot be read.
 
@@ -191,6 +229,143 @@ def target_header_name(target: dict) -> str:
 
 def exploit_asset_name(target: dict) -> str:
     return f"{target['payload'].lower()}-app-{target['profileId']}.so"
+
+
+def check_manager(label: str, build: dict, problems: Problems) -> None:
+    override = build.get("manager")
+    if override is None:
+        return
+    if not isinstance(override, dict):
+        problems.add(f"{label}: kernelsu.json manager must be an object")
+        return
+    unknown = set(override) - set(MANAGER_KEYS) - {"required", "reason", "$comment"}
+    if unknown:
+        problems.add(f"{label}: kernelsu.json manager has unknown key(s) {sorted(unknown)}")
+    # A manager entry that names no download is worse than none: the app would
+    # keep pointing at upstream's while the target claims it needs another.
+    if not override.get("url"):
+        problems.add(f"{label}: kernelsu.json manager needs a url")
+    if "versionCode" in override and not isinstance(override["versionCode"], int):
+        problems.add(f"{label}: kernelsu.json manager.versionCode must be an integer")
+    for key in ("versionName", "reason"):
+        if key in override and not isinstance(override[key], str):
+            problems.add(f"{label}: kernelsu.json manager.{key} must be a string")
+    if "required" in override and not isinstance(override["required"], bool):
+        problems.add(f"{label}: kernelsu.json manager.required must be a boolean")
+    # Saying a manager is required without saying why leaves the app with a
+    # warning it cannot explain, on a screen where the next step is a download.
+    if override.get("required") and not override.get("reason"):
+        problems.add(f"{label}: kernelsu.json manager.required needs a reason")
+
+
+KERNEL_SOURCE_KEYS = {"repo", "ref", "commit", "subject", "clang"}
+
+
+def check_kernel_source(label: str, build: dict, directory: Path, problems: Problems) -> None:
+    """The device's own kernel, for a target the DDK image cannot stand in for.
+
+    This is what the kernel-module workflow builds, and it is paired with
+    prebuiltModule in both directions on purpose. A kernelSource with nothing
+    referencing its result is a ten-minute build nothing consumes; a
+    prebuiltModule with no kernelSource is a URL with no recipe behind it, which
+    is what this used to be when the recipe lived in another repository.
+    """
+    source = build.get("kernelSource")
+    prebuilt = build.get("prebuiltModule")
+
+    if source is None:
+        if prebuilt is not None:
+            problems.add(
+                f"{label}: kernelsu.json names a prebuiltModule but no kernelSource, "
+                "so nothing here says how that module was built"
+            )
+        return
+    if prebuilt is None:
+        problems.add(
+            f"{label}: kernelsu.json names a kernelSource but no prebuiltModule, "
+            "so nothing would use the module it builds"
+        )
+
+    if not isinstance(source, dict):
+        problems.add(f"{label}: kernelsu.json kernelSource must be an object")
+        return
+    unknown = set(source) - KERNEL_SOURCE_KEYS - {"$comment"}
+    if unknown:
+        problems.add(f"{label}: kernelsu.json kernelSource has unknown key(s) {sorted(unknown)}")
+    missing = sorted(KERNEL_SOURCE_KEYS - set(source))
+    if missing:
+        problems.add(f"{label}: kernelsu.json kernelSource is missing {missing}")
+        return
+
+    repo = source["repo"]
+    if not isinstance(repo, str) or not repo.startswith("https://"):
+        problems.add(f"{label}: kernelSource.repo must be https, got {repo!r}")
+    # A branch that moves is a different kernel, so the commit is what is
+    # fetched and ref is only there to say where to look for it.
+    commit = source["commit"]
+    if not isinstance(commit, str) or not re.fullmatch(r"[0-9a-f]{40}", commit):
+        problems.add(f"{label}: kernelSource.commit must be a full sha, got {commit!r}")
+    for field in ("ref", "subject", "clang"):
+        if not isinstance(source[field], str) or not source[field]:
+            problems.add(f"{label}: kernelSource.{field} must be a non-empty string")
+
+    # The device's own /proc/config.gz, beside the file that names it. Not a
+    # defconfig: being close to what the device runs is the entire reason this
+    # target is not built in a DDK image.
+    if not (directory / KERNEL_CONFIG_NAME).is_file():
+        problems.add(f"{label}: kernelSource needs {directory / KERNEL_CONFIG_NAME}")
+
+
+def check_prebuilt_module(label: str, build: dict, problems: Problems) -> None:
+    """A module built ahead of the payload build, named by digest.
+
+    A DDK image is a stand-in for a device's kernel, and for some devices it is
+    not a good enough one -- close enough to build and link, not close enough to
+    load. Those targets have their module built from the device's own kernel
+    source by the kernel-module workflow, which publishes it, and name the
+    result here. The digest is not optional: it is the whole difference between
+    referencing a build and trusting a URL.
+    """
+    prebuilt = build.get("prebuiltModule")
+    if prebuilt is None:
+        return
+    if not isinstance(prebuilt, dict) or set(prebuilt) - {"url", "sha256", "$comment"}:
+        problems.add(f"{label}: kernelsu.json prebuiltModule must be an object of url and sha256")
+        return
+    url, digest = prebuilt.get("url"), prebuilt.get("sha256")
+    if not isinstance(url, str) or not url.startswith("https://"):
+        problems.add(f"{label}: prebuiltModule.url must be https, got {url!r}")
+    if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+        problems.add(f"{label}: prebuiltModule.sha256 must be a lowercase sha256, got {digest!r}")
+
+
+def check_manager_signature(label: str, build: dict, problems: Problems) -> None:
+    """The certificate this build's module is told to accept as a manager.
+
+    KernelSU's module picks its manager by hashing the APK's v2 signing
+    certificate against a size and hash compiled in. A manager built anywhere
+    but upstream is signed anywhere but upstream, so a module that does not
+    carry that certificate in one of its two slots does not see it -- and says
+    nothing about why. The pair is not a secret; it is recorded here so the
+    module and the APK cannot come apart, and so the build fails rather than
+    the device going quiet.
+    """
+    signature = build.get("managerSignature")
+    if signature is None:
+        if build.get("manager"):
+            problems.add(
+                f"{label}: kernelsu.json names a manager of its own but no "
+                "managerSignature, so the module it builds would not recognise it"
+            )
+        return
+    if not isinstance(signature, dict) or set(signature) - {"size", "hash", "$comment"}:
+        problems.add(f"{label}: kernelsu.json managerSignature must be an object of size and hash")
+        return
+    size, digest = signature.get("size"), signature.get("hash")
+    if not isinstance(size, str) or not re.fullmatch(r"0x[0-9a-f]{4}", size):
+        problems.add(f"{label}: managerSignature.size must look like 0x0524, got {size!r}")
+    if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+        problems.add(f"{label}: managerSignature.hash must be a lowercase sha256, got {digest!r}")
 
 
 def ksud_asset_name(build_id: str) -> str:
@@ -302,6 +477,10 @@ def load_sources(root: Path, problems: Problems) -> list[dict]:
         target["_kernelsu"] = json.loads(kernelsu_path.read_text(encoding="utf-8"))
         target["_dir"] = directory
         check_patch_sets(root, label, target["_kernelsu"], problems)
+        check_manager(label, target["_kernelsu"], problems)
+        check_manager_signature(label, target["_kernelsu"], problems)
+        check_prebuilt_module(label, target["_kernelsu"], problems)
+        check_kernel_source(label, target["_kernelsu"], directory, problems)
 
         # The app matches kernelRelease and kernelBuildVersion separately but
         # both are read off the same /proc/version line. If either is not
@@ -349,6 +528,37 @@ def kernelsu_builds(targets: list[dict], problems: Problems) -> list[dict]:
     return list(builds.values())
 
 
+def kernel_module_builds(targets: list[dict]) -> list[dict]:
+    """The matrix for the kernel-module workflow: the builds that need a kernel.
+
+    Flat, and named the way the workflow reads them, so that adding a target
+    whose module has to come from source is a kernelsu.json and a config.gz and
+    no workflow change. One entry per build id, like kernelsu_builds -- the
+    disagreement between two targets describing one id differently is caught
+    there, before this runs.
+    """
+    builds: dict[str, dict] = {}
+    for target in targets:
+        kernelsu = target["_kernelsu"]
+        source = kernelsu.get("kernelSource")
+        if source is None or kernelsu["id"] in builds:
+            continue
+        signature = kernelsu.get("managerSignature") or {}
+        builds[kernelsu["id"]] = {
+            "id": kernelsu["id"],
+            "dir": str(target["_dir"]),
+            "kernelRelease": kernelsu["kernelRelease"],
+            "image": kernelsu["ddkImage"],
+            "clang": source["clang"],
+            "repo": source["repo"],
+            "commit": source["commit"],
+            "patchSets": " ".join(kernelsu.get("patchSets", [])),
+            "sigSize": signature.get("size", ""),
+            "sigHash": signature.get("hash", ""),
+        }
+    return list(builds.values())
+
+
 def report_pending(targets: list[dict]) -> None:
     for target in targets:
         if not feed_ready(target):
@@ -361,7 +571,8 @@ def report_pending(targets: list[dict]) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--emit", choices=["validate", "targets", "kernelsu", "feed"],
+    parser.add_argument("--emit",
+                        choices=["validate", "targets", "kernelsu", "kernel-modules", "feed"],
                         default="feed")
     parser.add_argument("--root", type=Path, default=Path("."))
     parser.add_argument("--exploit-dir", type=Path)
@@ -398,7 +609,8 @@ def main() -> int:
         ready = [t for t in targets if feed_ready(t)]
         print(
             f"{len(targets)} target(s) validated, {len(ready)} ready for the feed, "
-            f"{len(builds)} KernelSU build(s)"
+            f"{len(builds)} KernelSU build(s), "
+            f"{len(kernel_module_builds(targets))} of them from a kernel source"
         )
         return 0
 
@@ -420,6 +632,10 @@ def main() -> int:
 
     if args.emit == "kernelsu":
         print(json.dumps(builds, separators=(",", ":")))
+        return 0
+
+    if args.emit == "kernel-modules":
+        print(json.dumps(kernel_module_builds(targets), separators=(",", ":")))
         return 0
 
     report_pending(targets)
@@ -477,7 +693,7 @@ def main() -> int:
             "size": ksud.stat().st_size,
             "kmi": build["kmi"],
             "managerPackage": build["managerPackage"],
-        } | manager
+        } | manager | build_manager(build)
         entries.append(entry)
 
     if problems:

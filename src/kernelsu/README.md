@@ -101,8 +101,9 @@ behind its own `CONFIG_KSU_SAMSUNG_*` option, which the target passes in
 `config` alongside the set — the options gate code that only the set puts there,
 so either one without the other does nothing.
 
-No target in this repository currently names a set: every build here is
-`common` alone.
+One target names a set: `quest3` takes `devices/quest3`, which keeps the
+tracepoint mark on the zygote launcher Horizon OS boots through. Every other
+build here is `common` alone.
 
 A name that resolves to nothing fails the build, and `tools/generate_feed.py`
 fails on it in seconds beforehand whenever the submodule is checked out. That is
@@ -169,6 +170,29 @@ cargo build --release --target aarch64-linux-android -p ksud \
 
 `ksud` picks its module by KMI at run time from the embedded
 `<kmi>_kernelsu.ko` assets, so the name matters.
+
+## When the DDK image is not close enough
+
+A DDK image is a stand-in for a device's kernel, and for some devices it is not
+a good enough one — close enough to build and link, not close enough to load.
+Such a target names a `kernelSource` in its `kernelsu.json` and keeps the
+device's own `/proc/config.gz` as `kernel.config` beside it. The
+**build kernel-source modules** workflow builds that one against the kernel it
+names, and the target references the result by digest under `prebuiltModule`;
+the payload build then downloads and checks it rather than building one, and
+everything after that — the `ksud` that embeds it, the asset names — is the
+same. `ddkImage` still names the closest KMI, because that is what `ksud` is
+built with.
+
+The two keys are required together: a `kernelSource` nothing references is a
+ten-minute build with no consumer, and a `prebuiltModule` with no
+`kernelSource` is a URL with no recipe behind it. `tools/generate_feed.py`
+fails on either.
+
+That workflow does not run in the payload build because it takes ten minutes on
+a tree that never changes. It publishes a `modules-*` **prerelease**, never the
+latest one: the app resolves `releases/latest` and downloads every asset from
+that tag, so only the `payloads-*` releases may hold that spot.
 
 ## The audit CI cannot run
 

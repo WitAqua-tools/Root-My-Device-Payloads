@@ -28,6 +28,31 @@ inputs:
       version comes from the KernelSU pin and not from here; may be empty
     required: false
     default: ""
+  prebuilt-module-url:
+    description: >
+      A module built ahead of this run to use instead of building one here. Set
+      for a target whose kernel a generic DDK image cannot stand in for -- the
+      kernel-module workflow builds it from the device's own kernel source and
+      publishes it, and the target's kernelSource says how. Empty for
+      everything else.
+    required: false
+    default: ""
+  prebuilt-module-sha256:
+    description: sha256 the downloaded module must have, required with the url
+    required: false
+    default: ""
+  manager-signature-size:
+    description: >
+      DER size of a second certificate the module should accept as a manager,
+      as 0x0524. Upstream's stays in the first slot, so a module built with
+      this still recognises the official manager. Empty for a target that uses
+      only the official one.
+    required: false
+    default: ""
+  manager-signature-hash:
+    description: sha256 of that certificate, lowercase hex
+    required: false
+    default: ""
   ndk-version:
     description: sdkmanager package revision of the NDK to build ksud with
     required: true
@@ -116,7 +141,45 @@ runs:
         "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
           "ndk;${{ inputs.ndk-version }}" > /dev/null
 
+    # A module built from the device's own kernel source by the kernel-module
+    # workflow, verified rather than rebuilt. It lands where the DDK build would
+    # have left one, so everything downstream -- the ksud that embeds it, the
+    # artefact names -- is unchanged.
+    - name: Take the prebuilt ${{ inputs.id }} module
+      if: inputs.prebuilt-module-url != ''
+      shell: bash
+      env:
+        URL: ${{ inputs.prebuilt-module-url }}
+        WANT: ${{ inputs.prebuilt-module-sha256 }}
+      run: |
+        set -euo pipefail
+        test -n "$WANT" || { echo "::error::prebuilt-module-sha256 is required with the url"; exit 1; }
+        ko=src/kernelsu/KernelSU/kernel/kernelsu.ko
+        curl -fsSL "$URL" -o "$ko"
+        got=$(sha256sum "$ko" | cut -d' ' -f1)
+        echo "sha256 $got"
+        [ "$got" = "$WANT" ] || { echo "::error::the module is $got, not $WANT"; exit 1; }
+
+        # The same three things the DDK path proves about what it built. A
+        # prebuilt is not exempt from them just because someone else built it.
+        vermagic=$(strings -a "$ko" | sed -n 's/^vermagic=//p' | head -1)
+        expected='${{ inputs.kernel-release }} SMP preempt mod_unload modversions aarch64'
+        echo "vermagic: $vermagic"
+        [ "$vermagic" = "$expected" ] || { echo "::error::vermagic is '$vermagic', expected '$expected'"; exit 1; }
+
+        if ! readelf -SW "$ko" | grep -q '__versions .*PROGBITS'; then
+          echo "::error::the module has no __versions section"; exit 1
+        fi
+
+        # Not checked here: which certificates the module accepts as a
+        # manager. Kbuild folds EXPECTED_HASH into bytes at compile time, so
+        # the hex is not in the binary to look for -- confirmed against a
+        # module known to carry it. The producing build reads the pair back out
+        # of Kbuild's own output, and the digest above is what ties this file
+        # to that build.
+
     - name: Build the ${{ inputs.id }} kernel module
+      if: inputs.prebuilt-module-url == ''
       shell: bash
       run: |
         set -o pipefail
@@ -125,6 +188,8 @@ runs:
           -w /workspace/src/kernelsu/KernelSU/kernel \
           -e KERNEL_RELEASE='${{ inputs.kernel-release }}' \
           -e TARGET_CONFIG='${{ inputs.config }}' \
+          -e KSU_EXPECTED_SIZE2='${{ inputs.manager-signature-size }}' \
+          -e KSU_EXPECTED_HASH2='${{ inputs.manager-signature-hash }}' \
           '${{ inputs.ddk-image }}' \
           bash -eu -c '
             # Without this the module records no KSU_GIT_VERSION, because the
@@ -148,6 +213,17 @@ runs:
             : > "$KDIR/Module.symvers"
 
             make clean >/dev/null 2>&1 || true
+
+            # Kbuild takes the second manager certificate as a make variable
+            # and errors out if only one half of the pair is set, so an empty
+            # one has to be absent rather than empty. Environment variables are
+            # make variables, so exporting is all it takes.
+            if [ -n "${KSU_EXPECTED_SIZE2:-}" ]; then
+              echo "manager signature slot 2: $KSU_EXPECTED_SIZE2 $KSU_EXPECTED_HASH2"
+            else
+              unset KSU_EXPECTED_SIZE2 KSU_EXPECTED_HASH2
+            fi
+
             # env, not a bare prefix: the shell only recognises assignments
             # written literally before expansion, so $TARGET_CONFIG would be
             # run as a command instead of setting the options.
@@ -159,6 +235,18 @@ runs:
         # git resolved inside the container. It reaches the device as the
         # version the manager accepts or refuses, so close the loop here rather
         # than reading it out of a log after a run.
+        # Same for the second manager certificate: a module that silently went
+        # out without it does not recognise the manager the target names, and
+        # says nothing on the device about why.
+        if [ -n '${{ inputs.manager-signature-size }}' ]; then
+          slot=$(sed -n 's/^-- KernelSU Manager signature hash2: //p' kernelsu-build.log | tail -1)
+          if [ "$slot" != '${{ inputs.manager-signature-hash }}' ]; then
+            echo "::error::the module was built trusting $slot in slot 2, not ${{ inputs.manager-signature-hash }}"
+            exit 1
+          fi
+          echo "manager signature slot 2: $slot"
+        fi
+
         built=$(sed -n 's/^-- KernelSU version: //p' kernelsu-build.log | tail -1)
         echo "built=$built expected=$KSU_EXPECTED_VERSION"
         if [ "$built" != "$KSU_EXPECTED_VERSION" ]; then

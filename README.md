@@ -26,6 +26,7 @@ Use only on devices you own or are explicitly authorized to test.
 | `pmg110-cn-16.0.9.400` | `core66` | OPPO PMG110 / K15 Pro+ | MediaTek MT6991 | CN | `PMG110_16.0.9.400(CN01)` | `6.6.118-android15-8-g93e223c276e7-abogki500782043-4k` (`android15-6.6`, 4K pages) | `OPPO/PMG110/OP61E5L1:16/BP2A.250605.015/B.c24acd_188efc3_187038b:user/release-keys` | Exploit core device-verified on this firmware outside this repository; the feed entry ships, but the payload built here has not completed a run, and until its root glue was wired up no build of it could have reported one. |
 | `warhol-jp-OS3.0.304.0.WPSJPXM` | `core612` | Xiaomi 17T Pro | MediaTek MT6993 | JP | `OS3.0.304.0.WPSJPXM` | `6.12.38-android16-5-g1d46253471dd-ab15048002-4k` (`android16-6.12`, 4K pages) | `Xiaomi/warhol_jp/warhol:16/BP2A.250605.031.A3/OS3.0.304.0.WPSJPXM:user/release-keys` | Working from the app, KernelSU `32525-2`. |
 | `xig07-jp-OS3.0.7.0.WNEJPKD` | `core61` | Xiaomi 14T (au XIG07) | MediaTek MT6897 | JP | `OS3.0.7.0.WNEJPKD` | `6.1.138-android14-11-g44bda9e8f6e9-ab13792638` (`android14-6.1`, 4K pages) | `Xiaomi/XIG07_jp_kdi/XIG07:16/BP2A.250605.031.A3/OS3.0.7.0.WNEJPKD:user/release-keys` | Working from the app, KernelSU `32525-2`; nothing has been served through the feed yet. |
+| `quest3-global-5.10.240-g55be3759aea4` | `core510` | Meta Quest 3 (eureka) | Qualcomm SXR2230P | GLOBAL | `UP1A.231005.007.A1` | `5.10.240-g55be3759aea4` (Meta's own 5.10, not a GKI branch, 4K pages) | `oculus/eureka/eureka:14/UP1A.231005.007.A1/52345320035400520:user/abl_signing_keys:release,amss_signing_keys:release,release-keys` | Working from the app, KernelSU loaded and answering; its module is built from Meta's own kernel source rather than a DDK image. |
 
 Targets are exact-firmware targets. A matching model with a different build is
 not equivalent and must be ported separately. Which fields a device is matched
@@ -48,6 +49,7 @@ core with different offsets — and each target names the one it needs in
 | `core61` | `android14-6.1` |
 | `core66` | `android15-6.6` |
 | `core612` | `android16-6.12` |
+| `core510` | `5.10` (not a GKI branch) |
 
 What each core is, how it reaches root, what it carries against the work it
 follows, how a boot's kernel-MTE answer is decided, and how to add a core are in
@@ -72,6 +74,10 @@ src/payloads/<payload>/               one directory per exploit
                                       hands over on, and this repository's own
                      core612/         the 6.12 core
                        root.c         the same seam for that core
+                     core510/         the 5.10 core
+                       root.c         the same seam for that core
+                       exp32/         its 32-bit stage, built as its own
+                                      artifact and carried in the payload
                      root_helper.c    getting the helper resident from a context
                                       that is already root, init hijack
                                       included; linked into the cores that
