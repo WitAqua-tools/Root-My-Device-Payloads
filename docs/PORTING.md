@@ -251,6 +251,10 @@ published as a release asset under a tag unique to that run. Nothing about it is
 committed, and no artifact is committed either. Adding a target needs no change
 to the Makefile or to the workflow — both read the target list.
 
+Merging does not publish it. A push to `main` builds the targets it changed and
+stops; the release comes from running *build payloads* by hand with **release**
+ticked, which builds every target because the feed needs every size.
+
 ## 10. Bring it up on the device
 
 Two routes, and they fail differently, so use them in this order.

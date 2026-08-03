@@ -1,10 +1,26 @@
 name: build payloads
 
+# main only. A merged pull request is a push to main, so that is the one event
+# this needs; a run on the pull request itself would build the same commits
+# twice and publish neither.
+#
+# A push builds what it changed and publishes nothing. Releasing is a decision,
+# not something a merge does on its own: the application resolves
+# releases/latest and downloads every asset from that tag, so publishing one is
+# publishing to every device that asks, and it happens when someone asks for it.
 on:
   push:
     branches: [main]
-  pull_request:
   workflow_dispatch:
+    inputs:
+      target:
+        description: one profileId, or empty for all of them
+        required: false
+        default: ""
+      release:
+        description: publish the built payloads as a release
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -23,9 +39,13 @@ jobs:
       targets: ${{ steps.list.outputs.targets }}
       kernelsu_feed: ${{ steps.list.outputs.kernelsu_feed }}
       kernelsu_extra: ${{ steps.list.outputs.kernelsu_extra }}
+      full: ${{ steps.list.outputs.full }}
       tag: ${{ steps.list.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Enough history to diff the push against what main was before it.
+          fetch-depth: 0
 
       # The patch submodule only, which is a handful of text files: it is what
       # lets a target naming a patch set that does not exist fail in this job
@@ -45,18 +65,56 @@ jobs:
         # feed, so nothing here has to re-derive how a target maps onto a path.
         # Adding a target or a payload needs no workflow change.
         #
+        # A push builds only what it changed. The script decides what that
+        # reaches -- a target's own directory, or the core its payload shares
+        # with the targets on that core -- and answers "everything" for any
+        # path it cannot confine, which is most of them.
+        #
+        # `full` is the part that matters downstream: a feed can only be
+        # generated from a run that built every target, because it joins each
+        # entry to the artifact's exact size.
+        #
         # The KernelSU builds are split by whether anything that can reach the
         # feed depends on them. Only that half can hold up a release: a build
         # no publishable target needs is published when it succeeds and
         # reported when it does not, but it must never be the reason the app is
         # left with no payloads to fetch.
+        env:
+          ONLY: ${{ inputs.target }}
+          BEFORE: ${{ github.event.before }}
         run: |
-          targets=$(python3 tools/generate_feed.py --emit targets)
-          kernelsu=$(python3 tools/generate_feed.py --emit kernelsu)
+          set -euo pipefail
+
+          narrow=()
+          if [ '${{ github.event_name }}' = push ]; then
+            # A first push to a branch, or a force-push, gives a null before;
+            # there is nothing to diff against, so build everything.
+            if [ -n "$BEFORE" ] && [ "$BEFORE" != 0000000000000000000000000000000000000000 ] \
+               && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+              git diff --name-only "$BEFORE" '${{ github.sha }}' > changed.txt
+              echo "changed since $BEFORE:"; sed 's/^/  /' changed.txt
+              narrow=(--changed-file changed.txt)
+            else
+              echo "no usable before-sha; building everything"
+            fi
+          fi
+
+          if [ -n "$ONLY" ]; then
+            if [ '${{ inputs.release }}' = true ]; then
+              echo "::error::a release has to be every target -- the feed joins each entry"
+              echo "::error::to its artifact's size, so one built alone cannot produce one"
+              exit 1
+            fi
+            narrow=(--only "$ONLY")
+          fi
+
+          plan=$(python3 tools/generate_feed.py --emit plan "${narrow[@]}")
+
           {
-            echo "targets=$targets"
-            echo "kernelsu_feed=$(jq -c '[.[] | select(.feed)]' <<<"$kernelsu")"
-            echo "kernelsu_extra=$(jq -c '[.[] | select(.feed | not)]' <<<"$kernelsu")"
+            echo "full=$(jq -r .full <<<"$plan")"
+            echo "targets=$(jq -c .targets <<<"$plan")"
+            echo "kernelsu_feed=$(jq -c .kernelsuFeed <<<"$plan")"
+            echo "kernelsu_extra=$(jq -c .kernelsuExtra <<<"$plan")"
             # A tag that is unique per run. The app resolves releases/latest and
             # then downloads every artifact from that tag, so the set it sees
             # has to be immutable once published -- a rolling tag whose assets
@@ -67,6 +125,7 @@ jobs:
 
   exploit:
     needs: discover
+    if: needs.discover.outputs.targets != '[]'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -223,12 +282,18 @@ jobs:
     # artifact is missing breaks installs at run time. Build it from what the
     # matrices actually produced rather than from anything committed.
     #
+    # Only from a run that built every target: each entry is joined to its
+    # artifact's exact size, so a narrowed run has nothing to join half of them
+    # to. A push that changed one core builds and checks that core and stops
+    # there.
+    #
     # always(): the kernelsu matrix is skipped outright when no target is ready
     # for the feed, and a feed with no entries is still a valid thing to
     # publish while a port is in progress.
     needs: [discover, exploit, kernelsu]
     if: |
       always()
+      && needs.discover.outputs.full == 'true'
       && needs.exploit.result == 'success'
       && needs.kernelsu.result != 'failure'
     runs-on: ubuntu-latest
@@ -293,6 +358,11 @@ jobs:
           if-no-files-found: error
 
   publish:
+    # Only ever from a hand-started run with the box ticked. A merge builds and
+    # checks; what reaches devices is decided by a person, because the app
+    # resolves releases/latest and takes every asset from whatever tag is
+    # sitting there.
+    #
     # kernelsu-extra is waited on so its artifacts make it into the release,
     # but always() means a failure there does not withhold one. The feed is the
     # only hard requirement.
@@ -300,7 +370,8 @@ jobs:
     if: |
       always()
       && needs.feed.result == 'success'
-      && github.event_name == 'push'
+      && github.event_name == 'workflow_dispatch'
+      && inputs.release
       && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:

@@ -11,8 +11,8 @@ name: build kernel-source modules
 # kernelsu.json prebuiltModule, so the two are tied together without the
 # payload build having to rebuild a kernel to get there.
 #
-# A push or a pull request that touches any of it builds and checks. Only a
-# hand-started run with the box ticked publishes.
+# A push to main that touches any of it builds and checks. Only a hand-started
+# run with the box ticked publishes.
 
 on:
   workflow_dispatch:
@@ -25,18 +25,16 @@ on:
         description: publish the modules as a release
         type: boolean
         default: false
+  # main only, like the payload build, and only for the files that decide what
+  # the module is. Ten minutes is worth spending when the kernel, the config,
+  # the scripts or the patch pin move, and not otherwise.
   push:
     branches: [main]
     paths:
       - src/targets/**/kernelsu.json
       - src/targets/**/kernel.config
-      - tools/kernel/**
-      - tools/generate_feed.py
-      - .github/workflows/kernel-module.yml
-  pull_request:
-    paths:
-      - src/targets/**/kernelsu.json
-      - src/targets/**/kernel.config
+      - src/kernelsu/KernelSU
+      - src/kernelsu/Root-My-Device-KSU
       - tools/kernel/**
       - tools/generate_feed.py
       - .github/workflows/kernel-module.yml
