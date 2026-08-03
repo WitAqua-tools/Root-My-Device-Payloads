@@ -185,50 +185,23 @@ runs:
       shell: bash
       run: |
         set -o pipefail
+        # The body is tools/kernel/build-ddk-module.sh and not an inline
+        # `bash -c`, because that form has broken three times now -- always an
+        # apostrophe inside a comment closing the quote and handing the rest of
+        # the body to the outer shell, which then ran make at the repository
+        # root and compiled the payload instead of the module.
         docker run --rm \
           -v "$PWD:/workspace" \
-          -w /workspace/src/kernelsu/KernelSU/kernel \
+          -w /workspace \
           -e KERNEL_RELEASE='${{ inputs.kernel-release }}' \
           -e TARGET_CONFIG='${{ inputs.config }}' \
           -e KSU_MANAGER_PACKAGE='${{ inputs.manager-package }}' \
           -e KSU_EXPECTED_SIZE='${{ inputs.manager-signature-size }}' \
           -e KSU_EXPECTED_HASH='${{ inputs.manager-signature-hash }}' \
           '${{ inputs.ddk-image }}' \
-          bash -eu -c '
-            # Without this the module records no KSU_GIT_VERSION, because the
-            # bind-mounted tree is owned by a different uid than the container.
-            git config --global --add safe.directory /workspace/src/kernelsu/KernelSU
-
-            # The DDK ships its own release string and the targets set
-            # CONFIG_MODULE_FORCE_LOAD=n, so the module has to be built
-            # claiming the exact release of the kernel it will be loaded into.
-            # For a build whose kernelRelease is already the image default this
-            # is a no-op, which is how the S25U module was originally produced.
-            old=$(cat "$KDIR/include/config/kernel.release")
-            echo "kernel release: $old -> $KERNEL_RELEASE"
-            sed -i "s|$old|$KERNEL_RELEASE|g" "$KDIR/include/generated/utsrelease.h"
-            printf "%s\n" "$KERNEL_RELEASE" > "$KDIR/include/config/kernel.release"
-
-            # ksud late-load resolves undefined symbols from /proc/kallsyms
-            # before init_module, which requires a zero-length __versions
-            # section. Leaving the DDK Module.symvers in place would make
-            # modpost emit CRCs for a kernel that is not the target.
-            : > "$KDIR/Module.symvers"
-
-            make clean >/dev/null 2>&1 || true
-
-            # Kbuild takes all three as make variables, and environment
-            # variables are make variables, so being exported is all it takes.
-            # The certificate pair has defaults there -- upstream's own -- and
-            # setting them replaces those rather than adding a second slot, so
-            # this module accepts one manager and it is not the official one.
-            echo "manager: $KSU_MANAGER_PACKAGE $KSU_EXPECTED_SIZE $KSU_EXPECTED_HASH"
-
-            # env, not a bare prefix: the shell only recognises assignments
-            # written literally before expansion, so $TARGET_CONFIG would be
-            # run as a command instead of setting the options.
-            env CONFIG_KSU=m $TARGET_CONFIG KBUILD_MODPOST_WARN=1 CC=clang make -j"$(nproc)"
-          ' | tee kernelsu-build.log
+          bash /workspace/tools/kernel/build-ddk-module.sh \
+            /workspace/src/kernelsu/KernelSU \
+          | tee kernelsu-build.log
         sudo chown -R "$(id -u):$(id -g)" src/kernelsu/KernelSU
 
         # Kbuild prints what it compiled in, and that number is only right if
