@@ -97,14 +97,20 @@
       "everything else uses.",
       "",
       "The digest is what makes this a reference to a build rather than trust",
-      "in a URL, and the action checks vermagic, __versions and the manager",
-      "package on top of it -- the same things it proves about a module it",
-      "built itself. Not the certificate: Kbuild folds EXPECTED_HASH into bytes",
-      "at compile time, so the hex is not in the binary to look for. The",
-      "package survives as a string, because KSU_MANAGER_PACKAGE reaches the",
-      "compiler as a string literal that strncmp() then compares against."
+      "in a URL, and the action checks vermagic, __versions, the manager",
+      "package and the manager certificate on top of it -- the same things it",
+      "proves about a module it built itself.",
+      "",
+      "Both of those last two are strings the compiler keeps, and the",
+      "certificate one is worth more than it looks. EXPECTED_HASH is only",
+      "compared if the certificate is short enough to read, and the size is a",
+      "constant the compiler can fold: with a certificate over CERT_MAX_LENGTH",
+      "it proves the branch dead and drops the strcmp and its literal. So the",
+      "hash being present in the module is exactly the statement that a manager",
+      "signed with it can be recognised at all. It was absent for every build",
+      "made while the key was RSA-4096."
     ],
-    "url": "https://github.com/WitAqua-tools/Root-My-Device-Payloads/releases/download/modules-20260803-79dd391/kernelsu-quest3.ko",
-    "sha256": "3ad6692e2410dbb9b2495367ea2c4e649bfdc34d2d445e8011e9a1d6f6214d0d"
+    "url": "https://github.com/WitAqua-tools/Root-My-Device-Payloads/releases/download/modules-20260803-2aa87cc/kernelsu-quest3.ko",
+    "sha256": "39933d93a871131383336c60a61a950aa277634f6d650a65243397a3c8de2877"
   }
 }

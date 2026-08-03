@@ -173,18 +173,22 @@ runs:
           echo "::error::the module has no __versions section"; exit 1
         fi
 
-        # The manager package, which does survive into the binary: Kbuild
-        # passes it as a string literal for strncmp() to compare against. The
-        # certificate does not -- EXPECTED_HASH is folded into bytes at compile
-        # time, confirmed against a module known to carry it -- so that half is
-        # covered by the producing build reading it back out of Kbuild's own
-        # output, and by the digest above tying this file to that build.
-        if ! strings -a "$ko" | grep -qxF '${{ inputs.manager-package }}'; then
-          echo "::error::the module does not name ${{ inputs.manager-package }} as its manager,"
-          echo "::error::so it was built before that was pinned; rebuild and publish it"
-          exit 1
-        fi
-        echo "manager package: ${{ inputs.manager-package }}"
+        # Both halves of the manager survive into the binary as strings, and
+        # the certificate one says more than it looks. EXPECTED_HASH is only
+        # compared if the certificate is short enough to read, and the size is
+        # a constant: with one over CERT_MAX_LENGTH the compiler proves the
+        # branch dead and drops the strcmp along with its literal. So finding
+        # the hash here is the statement that a manager signed with it can be
+        # recognised at all -- it was absent from every module built while the
+        # key was RSA-4096, and nothing on a device said so.
+        for want in '${{ inputs.manager-package }}' '${{ inputs.manager-signature-hash }}'; do
+          if ! strings -a "$ko" | grep -qxF "$want"; then
+            echo "::error::the module does not carry '$want', so it does not look for"
+            echo "::error::the manager this build names -- rebuild and publish it"
+            exit 1
+          fi
+        done
+        echo "manager: ${{ inputs.manager-package }} ${{ inputs.manager-signature-hash }}"
 
     - name: Build the ${{ inputs.id }} kernel module
       if: inputs.prebuilt-module-url == ''
