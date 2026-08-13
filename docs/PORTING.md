@@ -35,13 +35,9 @@ with different numbers.
 ## 1. Decide whether an existing core covers this kernel
 
 Read `uname -r`. If the GKI branch matches a core this repository already has,
-the target stays on that core. Most ports then need only offsets. A verified
-behavioral difference may require a generic compile-time capability inside the
-same shared core, but never a copied core, target-private patch tree, or a
-model/manufacturer check. If the branch does not match, the port needs a new core
-first, which is a much larger piece of work: it is someone's exploit tree, not
-something derived from the firmware. Which cores exist, and what each already
-answers, is [`CORES.md`](CORES.md).
+the target stays on that core. Most ports then need only offsets; verified
+differences may select a generic compile-time capability. If the branch does
+not match, the port needs a new core. See [`CORES.md`](CORES.md).
 
 Bringing in a new core, as `core612` was:
 
@@ -155,11 +151,9 @@ be safe on that device.
 
 ### Shared-core capability selection
 
-Keep the target on the core selected by its kernel series. When the verified
-source needs a route already represented by a generic capability in
-[`CORES.md`](CORES.md), define that capability in `target-<core>.h`. When a new
-capability is unavoidable, add it to the shared core with the compatibility
-route as the default and validate every target on that core.
+Keep the target on the core selected by its kernel series. Select existing
+capabilities in `target-<core>.h`; add new ones with the compatibility route as
+the default and validate every target on that core.
 
 The boundary is strict:
 
@@ -170,10 +164,6 @@ The boundary is strict:
 - do not copy `core61` or `core66`, and do not create a target-only source patch;
 - `build.mk` may set declarative build metadata such as `APP_RELEASE_SIZE`; it
   may not run commands or replace source paths.
-
-OnePlus Pad 3 needs a 196608-byte padded app artifact, while the repository
-default remains 104128 bytes. That difference is therefore one line in its
-`build.mk`, not a device conditional in the Makefile.
 
 ## 6. Add the `src/targets.json` entry
 

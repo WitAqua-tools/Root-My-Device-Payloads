@@ -1,20 +1,12 @@
 #ifndef TARGET_ONEPLUS_PAD3_EX01_CORE66_H
 #define TARGET_ONEPLUS_PAD3_EX01_CORE66_H
 
-/* Shared core66 capability selection.  No model/manufacturer test exists in
- * the core; exact target metadata opts into this reusable transactional route. */
+/* Shared core66 capability selection. */
 #define RMD_CORE66_TRANSACTIONAL_ROUTE 1
 #define RMD_SUPERVISOR_DIRTY_GUARD 1
 #define GHOSTLOCK_PRELOAD 1
 
-/*
- * OnePlus Pad 3 OPD2415 — OxygenOS 16.0.9.400(EX01), SM8750P.
- *
- * This profile is deliberately tied to the full kernel release.  Symbol and
- * struct offsets come from the exact stock boot Image; physical placement
- * comes from the exact qcom,pakala post-DDR XBL configuration.  No OnePlus 13
- * or other SM8750 offset is inherited.
- */
+/* OnePlus Pad 3 OPD2415, OxygenOS 16.0.9.400(EX01), SM8750P. */
 #define BUILD_VARIANT_LABEL "oneplus_pad3_opd2415_ex01"
 #define BUILD_FINGERPRINT "oneplus/opd2415in/op6190l1"
 #define TARGET_LAYOUT_ID "opd2415-ex01-6.6.118-ab15114928"
@@ -23,17 +15,8 @@
 #define KIMAGE_TEXT_BASE 0xffffffc080000000ULL
 #define P0_PAGE_OFFSET   0xffffff8000000000ULL
 
-/*
- * Exact xbl_config post-DDR FDT:
- *   qntm_tz_memmap memory@80000000 -> [0x80000000, 0x100000000)
- *   memorymap memory@A8000000, mem-label="Kernel" -> 256 MiB
- * The raw Image (0x23a0000 bytes, text_offset=0) fits that region.  The first
- * established read primitive validates live, non-init kernel data at this
- * placement before any SELinux/root mutation.  The boot header page itself is
- * not a runtime oracle: arm64 reserves from _stext, so the preceding head.S
- * page may be reclaimed after boot.  GHOSTLOCK_PHYS_LOAD remains unavailable
- * in this release profile.
- */
+/* Exact xbl_config places the 0x23a0000-byte Image at 0xa8000000. Runtime
+ * validation uses live kernel data because the boot header may be reclaimed. */
 #define P0_PHYS_OFFSET 0x80000000ULL
 #ifndef P0_KERNEL_PHYS_LOAD
 #define P0_KERNEL_PHYS_LOAD 0xa8000000ULL
@@ -43,25 +26,13 @@
 #define P0_KERNEL_IMAGE_SIZE   0x023a0000ULL
 #define P0_DISABLE_RUNTIME_PHYS_LOAD_OVERRIDE 1
 
-/* Route B reaches physical/data aliases without the five-range Image
- * readback available to Route A.  It therefore stays absent from production
- * Pad 3 builds while KERNEL_PHYS_LOAD is only XBL-derived.  A developer must
- * make an explicit source-level unsafe build to re-enable it. */
+/* Disable routes that cannot validate physical placement or safe cleanup. */
 #define P0_DISABLE_DIRECT_ROOT_ROUTE 1
 
-/* A raw write into system_unbound_wq is racy with normal producers/workers
- * and is never part of the release binary. Route A3 mutates only a pinned,
- * fork-private credential's scalar fields and uses normal cred commits. */
 #define P0_DISABLE_RAW_WORKQUEUE_ROUTE 1
 
-/* The exact pselect/futex stack overlap is part of this build profile, not a
- * runtime tuning knob. A different shift or the legacy simple layout writes
- * different rt_mutex_waiter members and can turn a clean miss into a panic. */
 #define P0_DISABLE_RUNTIME_PSELECT_LAYOUT_OVERRIDE 1
 
-/* Remove the legitimate f_pi_chain waiter before overlaying the stale
- * f_pi_target waiter, then clear the latter through verified pipe R/W before
- * the waiter thread can unlock or exit. */
 #define DIRECT_WAITER_PI_CLEANUP 1
 
 #define KERNELSNITCH_IDENTITY_START 0xffffff8000000000ULL
@@ -81,9 +52,7 @@
 #define KS_MTE_TAGGED 0
 #define KERNELSNITCH_THRESHOLD_MULT 10
 
-/* Keep per-stage KernelSnitch timing receipts for exact-device diagnostics.
- * Historical hit/miss values were observed during FOPS preparation; the
- * earlier SLIDE value has no paired evidence and must never gate the route. */
+/* Per-stage KernelSnitch diagnostics and synchronization. */
 #define CORE66_TRANSACTIONAL_KERNELSNITCH_DIAGNOSTICS 1
 #define CORE66_TRANSACTIONAL_KERNELSNITCH_READY_BARRIER 1
 #define CORE66_TRANSACTIONAL_KERNELSNITCH_READY_TIMEOUT_MS 10000
@@ -117,9 +86,7 @@
  * select return count. */
 #define PSELECT_EXPECTED_READY 8
 
-/* Provisional Pad 3 bring-up budget.  Race timing stays runtime-tunable via
- * PSELECT_DELAY_USEC/PSELECT_ROUTE_DELAY_USEC; it is not copied into the exact
- * symbol/struct profile and will be revised only from this device's logs. */
+/* Pad 3 retry budget and dirty-state marker. */
 #define PAYLOAD_ATTEMPT_BUDGET 8
 #define PAYLOAD_ATTEMPT_TIMEOUT_SEC 180
 #define PAYLOAD_DIRTY_MARKER_PREFIX \
@@ -133,10 +100,7 @@
 #define SLIDE_KASLR_MAX   0x2fffe00000ULL
 #define SLIDE_KASLR_ALIGN 0x00200000ULL
 
-/* This exact Image has CONFIG_NF_LOG_SYSLOG=n, so no `loggers[][]` slot is a
- * safe proc_do_uuid anchor: every nfulnl pointer is followed by a NULL type-0
- * slot.  Use random_table[uuid].data -> nfulnl_logger instead.  The route is
- * target-gated so PMG/Nothing builds retain their existing boot-ID oracle. */
+/* CONFIG_NF_LOG_SYSLOG=n; use random_table[uuid].data as the slide anchor. */
 #define SLIDE_USE_RANDOM_UUID_LEAK 1
 
 /* Exact stock Image bytes retained as artifact/extractor gates.  They are not

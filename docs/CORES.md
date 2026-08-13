@@ -25,31 +25,20 @@ KASLR slide does not come from `perf_event_open`: SELinux gives `untrusted_app`
 no `perf_event` class, so the slide is read back through a sysctl the exploit's
 own write re-points. `CVE43499_SLIDE=perf|stamp|auto` forces either route.
 
-The compatibility `core66` route and `core612` arrive at the same place —
-root, SELinux permissive, helper not yet running — and share
-`root_helper.c`. The transactional `core66` route keeps its additional checked
-handoff in `core66/root.c`. Both `core61` routes likewise keep their helper
-handoff in `core61/root.c`, so `core61` does not link `root_helper.c`.
+`core66`'s compatibility route and `core612` share `root_helper.c`. Other
+handoffs remain in their core's `root.c`.
 
 ## What is a core's, and what is this repository's
 
-Each core starts from the published implementation named in
-[Credits](../README.md#credits). Its kernel-series implementation stays in one
-shared directory; a new device on the same series does not receive a copied core
-and does not receive a target-private source patch. Exact kernel constants stay
-in `src/targets/.../target-<core>.h` and sibling headers so one kernel's values
-cannot leak into another.
-
-Repository-owned integration includes `<core>/root.c`, `mte.c`, `preload.c`,
-`payload.h`, and the narrow compile-time seams needed when two targets on the
-same core require different verified routes. Those seams are selected by generic
-capability macros from the exact target header. They never inspect a model,
-manufacturer, codename, region or profile ID at run time.
+Each core starts from the implementation named in
+[Credits](../README.md#credits). Devices on the same kernel series share it;
+exact constants and compile-time capability selections stay in target headers.
+Repository-owned integration includes `<core>/root.c`, `mte.c`, `preload.c`
+and `payload.h`.
 
 ## Shared-core capability routes
 
-An unflagged target compiles the imported compatibility route. The current
-opt-ins are:
+Unflagged targets compile the compatibility route. Current opt-ins are:
 
 | Capability | Scope | Meaning |
 | --- | --- | --- |
@@ -58,21 +47,8 @@ opt-ins are:
 | `RMD_SUPERVISOR_RETRY_STATE` | shared supervisor | persists one-shot retry state between managed app attempts |
 | `RMD_SUPERVISOR_DIRTY_GUARD` | shared supervisor | refuses a new managed attempt after an unsafe partial state |
 
-These names describe behavior rather than devices. Nothing Phone (3a) still
-names `core61`; OnePlus Pad 3 still names `core66`. Their target headers opt into
-routes inside those shared cores. XIG07 and PMG110 define none of the new
-capabilities and therefore retain their previous source path after preprocessing.
-
-Deltas valid for every user of a core may remain unconditional. A target-only
-constant belongs in its header, and build metadata that cannot be a C constant
-belongs in its optional `build.mk`. Adding device-name tests to shared source or
-forking `core61`/`core66` for one target is not an acceptable port.
-
-The references sometimes name app glue this repository does not carry. For
-example, this repository publishes a separate bootstrap helper and checks its
-socket rather than probing a reference project's embedded `su` file. Such
-repository-wide integration stays ungated because no build here produces the
-reference-only file.
+Capability names describe behavior, not devices. Target-only constants belong
+in the target header; build metadata belongs in optional `build.mk`.
 
 ## What to check after building
 

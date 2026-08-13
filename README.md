@@ -53,64 +53,46 @@ core with different offsets — and each target names the one it needs in
 | `core612` | `android16-6.12` |
 | `core510` | `5.10` (not a GKI branch) |
 
-What each core is, how it reaches root, which target-selected capability
-routes it exposes, how a boot's kernel-MTE answer is decided, and how to add a
-core are in [`docs/CORES.md`](docs/CORES.md). The imported baselines and their
-published references are in [Credits](#credits). Repository-owned integration
-code, including the compile-time capability seams that keep targets on the same
-core without testing model or manufacturer names, is described in
-[Layout](#layout).
+Core behavior and porting details are in [`docs/CORES.md`](docs/CORES.md). The
+imported baselines and their published references are in [Credits](#credits).
 
 ## Layout
 
 ```text
 src/targets.json                      every target, and the only hand-authored feed input
 src/targets/<device>/<region>/<kernel release>/
-                     target-<core>.h  exact offsets plus generic compile-time
-                                      capability selections for that core
-                     *.h              optional exact-target tables included by
-                                      target-<core>.h
-                     build.mk         optional build metadata such as the fixed
-                                      padded app artifact size
-                     p0_fingerprint.h optional, and only where the selected core reads it
+                     target-<core>.h  exact offsets and capability selections
+                     *.h              optional target tables
+                     build.mk         optional build metadata
+                     p0_fingerprint.h optional core61 fingerprint data
                      kernelsu.json    the KernelSU build this target pairs with,
                                       and the patch sets that build takes
 src/payloads/<payload>/               one directory per exploit
-                     core61/          the shared android14-6.1 core
-                       root.c         that core's repository-owned root handoff seam
-                     core66/          the shared android15-6.6 core
-                       root.c         that core's repository-owned root handoff seam
-                     core612/         the shared android16-6.12 core
-                       root.c         that core's repository-owned root handoff seam
-                     core510/         the shared 5.10 core
-                       root.c         that core's repository-owned root handoff seam
+                     core61/          the 6.1 core
+                     core66/          the 6.6 core
+                     core612/         the 6.12 core
+                     core510/         the 5.10 core
+                       root.c         repository-owned root handoff
                        exp32/         its 32-bit stage, built as its own
                                       artifact and carried in the payload
                      root_helper.c    getting the helper resident from a context
                                       that is already root, init hijack included
                      mte.c            whether this boot's kernel tags heap pointers
-                     preload.c        the shared retry/attempt supervisor; exact
-                                      targets may select generic supervisor capabilities
-                     payload.h        the interface between core, supervisor and glue
-src/payloads/su_daemon/               the target-independent bootstrap helper
-                     su_daemon.c      protocol, uid check and command dispatch
-                     late_load.c      explicit legacy/sealed late-load dispatcher
-                     late_load_legacy.c
-                                      the historical KernelSU contract
-                     late_load_sealed.c
-                                      authenticated transactional completion
+                     preload.c        the shared retry supervisor
+                     payload.h        the glue interface
+src/payloads/su_daemon/               the bootstrap helper
+                     su_daemon.c      protocol, uid check and dispatch
+                     late_load.c      late-load dispatcher
+                     late_load_legacy.c / late_load_sealed.c
+                                      KernelSU late-load implementations
                      hold_refs.c      core66's kernel-page reference holder
                      su_daemon.h      the seam between those parts
 src/kernelsu/                         KernelSU submodule, patch submodule and audit tools
 ```
 
-A target's directory and header name are derived from `src/targets.json`
-rather than written down twice — [`docs/PORTING.md`](docs/PORTING.md) step 5.
-Targets sharing `core61` or `core66` compile the same core directory. Exact
-firmware selects only generic compile-time capabilities and constants from its
-target header; shared code never branches on a device, model or manufacturer
-string. The two markers the application refuses an install without, and which
-piece of the payload prints each, are step 10 of the same document.
+A target's directory and header name are derived from `src/targets.json` — see
+[`docs/PORTING.md`](docs/PORTING.md). Targets on the same kernel series share a
+core and select exact constants and optional capabilities through their header.
 
 ## Feed delivery
 
@@ -167,12 +149,8 @@ cve-2026-43499-root
 that is not named after the core.
 
 `release` is the one the feed publishes: it is size-checked and then padded to
-`APP_RELEASE_SIZE`. The shared default is 104128 bytes; a target that genuinely
-needs another fixed size declares only that value in its optional `build.mk`.
-The Makefile does not test a device name. `cve-2026-43499-root` is the bootstrap
-helper the app ships inside its APK; every target's build of it is the same
-binary, and [`docs/FEED.md`](docs/FEED.md) says why that has to stay true and why
-it is published here at all.
+`APP_RELEASE_SIZE`, normally 104128 bytes. A target may override it in
+`build.mk`. `cve-2026-43499-root` is the target-independent bootstrap helper.
 
 What to check on a build before trusting it — the release size, undefined
 symbols, the root glue, and that helper's hash — is

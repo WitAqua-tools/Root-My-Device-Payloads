@@ -25,10 +25,7 @@ CORE ?= core66
 API32 ?= 28
 
 TARGET_DIR := src/targets/$(TARGET)
-# A target may override build metadata that cannot live in a C header, such as
-# the fixed padded app artifact size.  The file is optional and generic: the
-# Makefile never tests a device/codename, and targets without it retain every
-# historical default.
+# Optional per-target build metadata, such as the padded app artifact size.
 TARGET_BUILD_CONFIG := $(TARGET_DIR)/build.mk
 # One header per core, because a core reads offsets the other has never heard
 # of; naming it after the core keeps both in the same target directory.
@@ -100,27 +97,12 @@ $(error $(CORE) needs a 32-bit stage; set ANDROID_NDK_HOME to an NDK containing 
 endif
 endif
 
-# Every core remains one shared implementation for its kernel series. Exact
-# constants and generic capability selections come from target-$(CORE).h; no
-# source path is copied or patched per device. The imported compatibility route
-# and any target-selected route therefore stay together under $(CORE_DIR).
-# What is wholly repository-owned is root.c -- and, for core510 alone, the
-# exp32_blob.S that carries its 32-bit stage inside the payload. Both are named
-# so that a core's code stays in that core's directory:
+# Each kernel series has one shared core. Exact constants and capability
+# selections come from target-$(CORE).h. root.c is repository-owned; core510's
+# exp32_blob.S is as well:
 #
 #   <core>/root.c  how that core gets the bootstrap helper resident as root.
-#                  A target-selected route may queue a usermodehelper, root a
-#                  private child, or use a context that is already root. The
-#                  choice stays inside the core and is made only from generic
-#                  target-header capabilities; the Makefile never selects it
-#                  by device name. One root.c is linked per build, and it is
-#                  listed apart from CORE_SRCS below so the build still says
-#                  which side of the import each file is on.
-#
-# Reference ports use their own app glue (preload.c, su_daemon.c and sometimes
-# an .incbin blob), none of which is copied. Re-importing a baseline must retain
-# this repository's root.c and reapply the documented generic capability seams;
-# it must not replace the shared core with one target's private tree.
+#                  The target header selects any route the core exposes.
 #
 # What is this repository's own and shared by every core:
 #
@@ -153,11 +135,7 @@ CORE_SRCS += $(if $(filter $(CORE),core510),\
   $(CORE_DIR)/q3slide.c \
   $(CORE_DIR)/root_stage.c)
 
-# Which cores use the shared root_helper.c implementation. core61 keeps its
-# helper handoff self-contained in core61/root.c: the compatibility route uses
-# a kernel usermodehelper and the direct-credential route uses its own rooted
-# child handoff. Linking root_helper.c there would therefore add a second,
-# unreachable implementation.
+# core61 keeps both helper handoffs in core61/root.c.
 # core510 does not either: its root.c carries an install_embedded_su of its
 # own, so linking the shared one would define the symbol twice.
 ROOT_HELPER_CORES := core66 core612
