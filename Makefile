@@ -10,7 +10,8 @@ PAYLOAD ?= CVE-2026-43499
 # GKI branch rather than to a SoC, so a target on a different kernel series
 # needs a different core, not a different set of offsets:
 #
-#   core66   android15-6.6, from pmg110-root
+#   core61   android14-6.1, from Root-My-Galaxy-Payloads
+#   core66   android15-6.6, from ghostlock-oneplus / pmg110-root
 #   core612  android16-6.12, from warhol-root (upstream popsicle plus its MTE fix)
 #   core510  5.10 (Meta's own kernel, not a GKI branch), from IonStackQuest3
 #
@@ -24,6 +25,8 @@ CORE ?= core66
 API32 ?= 28
 
 TARGET_DIR := src/targets/$(TARGET)
+# Optional per-target build metadata, such as the padded app artifact size.
+TARGET_BUILD_CONFIG := $(TARGET_DIR)/build.mk
 # One header per core, because a core reads offsets the other has never heard
 # of; naming it after the core keeps both in the same target directory.
 TARGET_HEADER_NAME ?= target-$(CORE).h
@@ -41,6 +44,8 @@ HELPER_DIR := src/payloads/su_daemon
 HELPER_SRCS := \
   $(HELPER_DIR)/su_daemon.c \
   $(HELPER_DIR)/late_load.c \
+  $(HELPER_DIR)/late_load_legacy.c \
+  $(HELPER_DIR)/late_load_sealed.c \
   $(HELPER_DIR)/hold_refs.c
 
 # '/' is legal in TARGET but not in a directory name that has to stay flat.
@@ -68,7 +73,8 @@ PAYLOAD_SLUG := $(shell echo '$(PAYLOAD)' | tr 'A-Z' 'a-z')
 PRELOAD := $(OUTDIR)/$(PAYLOAD_SLUG)
 APP_PRELOAD := $(OUTDIR)/$(PAYLOAD_SLUG)-app.so
 APP_RELEASE := $(OUTDIR)/$(PAYLOAD_SLUG)-app.release.so
-APP_RELEASE_SIZE := 104128
+APP_RELEASE_SIZE ?= 104128
+-include $(TARGET_BUILD_CONFIG)
 ROOT_HELPER := $(OUTDIR)/$(PAYLOAD_SLUG)-root
 
 # core510 is the one core that needs a second binary on the device before it
@@ -91,27 +97,12 @@ $(error $(CORE) needs a 32-bit stage; set ANDROID_NDK_HOME to an NDK containing 
 endif
 endif
 
-# Every core is an imported tree kept as close to the port it came from as it
-# can be: core612 carries one delta against warhol-root, core66 three against
-# pmg110-root and core510 three against IonStackQuest3, all listed in the
-# README. What under $(CORE_DIR) is *not* imported is root.c -- and, for
-# core510 alone, the exp32_blob.S that carries its 32-bit stage inside the
-# payload. Both are this repository's own, and are named so that a core's code
-# stays in that core's directory:
+# Each kernel series has one shared core. Exact constants and capability
+# selections come from target-$(CORE).h. root.c is repository-owned; core510's
+# exp32_blob.S is as well:
 #
 #   <core>/root.c  how that core gets the bootstrap helper resident as root.
-#                  core66 and core61 queue a usermodehelper work item from an
-#                  unprivileged process (install_android_root); core612 is
-#                  already root and execs it (install_embedded_su -> the shared
-#                  root_helper.c); core510 roots a forked child that has had
-#                  its seccomp filter cleared as well, and that child execs it
-#                  from an install_embedded_su of its own. One is linked per
-#                  build, and it is listed apart from CORE_SRCS below so the
-#                  build still says which side of the import each file is on.
-#
-# No port has a file by that name -- their own app glue is preload.c,
-# su_daemon.c and an .incbin blob, none of which was copied -- so re-importing
-# a core is still "replace everything here but root.c".
+#                  The target header selects any route the core exposes.
 #
 # What is this repository's own and shared by every core:
 #
@@ -144,10 +135,7 @@ CORE_SRCS += $(if $(filter $(CORE),core510),\
   $(CORE_DIR)/q3slide.c \
   $(CORE_DIR)/root_stage.c)
 
-# Which cores reach a root context of their own and so install the helper from
-# user space. core61 does not: it has the kernel exec the helper through a
-# usermodehelper work item and calls none of root_helper.c, so linking it there
-# would carry an init hijack no run of that core can reach.
+# core61 keeps both helper handoffs in core61/root.c.
 # core510 does not either: its root.c carries an install_embedded_su of its
 # own, so linking the shared one would define the symbol twice.
 ROOT_HELPER_CORES := core66 core612
@@ -166,7 +154,9 @@ APP_PRELOAD_SRCS := $(PRELOAD_SRCS)
 # The blob source .incbin's the exp32 artifact, so the artifact is a
 # prerequisite of every payload that carries it.
 PAYLOAD_DEPS := $(TARGET_HEADER) $(PAYLOAD_DIR)/payload.h \
+  $(wildcard $(TARGET_DIR)/*.h) $(wildcard $(TARGET_BUILD_CONFIG)) \
   $(wildcard $(CORE_DIR)/*.h $(CORE_DIR)/kernelsnitch/*.h) $(EXP32_ARTIFACT)
+HELPER_DEPS := $(HELPER_DIR)/su_daemon.h
 
 # -Isrc resolves the "targets/<...>/<header>" form that core66/offset.h
 # includes -- it was "../targets/..." while the core sat directly under src/,
@@ -251,7 +241,7 @@ $(PRELOAD): $(PRELOAD_SRCS) $(PAYLOAD_DEPS) | $(OUTDIR)
 	$(TARGET_CC) -fPIC $(COMMON_CFLAGS) $(PRELOAD_SRCS) \
 	  -shared -pthread -o $@
 
-$(ROOT_HELPER): $(HELPER_SRCS) $(HELPER_DIR)/su_daemon.h | $(OUTDIR)
+$(ROOT_HELPER): $(HELPER_SRCS) $(HELPER_DEPS) | $(OUTDIR)
 	$(TARGET_CC) -fPIE -pie -O2 -g0 -Wall -Wextra -I$(HELPER_DIR) \
 	  $(HELPER_SRCS) -ldl -o $@
 
@@ -280,6 +270,8 @@ info:
 	@echo "PRELOAD=$(PRELOAD)"
 	@echo "APP_PRELOAD=$(APP_PRELOAD)"
 	@echo "APP_RELEASE=$(APP_RELEASE)"
+	@echo "APP_RELEASE_SIZE=$(APP_RELEASE_SIZE)"
+	@echo "TARGET_BUILD_CONFIG=$(if $(wildcard $(TARGET_BUILD_CONFIG)),$(TARGET_BUILD_CONFIG),<default>)"
 	@echo "ROOT_HELPER=$(ROOT_HELPER)"
 
 clean:

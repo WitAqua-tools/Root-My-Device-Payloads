@@ -7,8 +7,8 @@ offsets — and each target names the one it needs in `src/targets.json`.
 
 | Core | Kernel | Route to root |
 | --- | --- | --- |
-| `core61` | `android14-6.1` | reaches no root context in user space, so it queues a `call_usermodehelper` work item and the kernel execs the helper |
-| `core66` | `android15-6.6` | swaps a forked *child*'s cred; that child is root and execs the helper itself |
+| `core61` | `android14-6.1` | the compatibility route queues a `call_usermodehelper` work item; `RMD_CORE61_DIRECT_CRED_ROUTE` instead patches a private child task/cred and lets that rooted child exec the helper |
+| `core66` | `android15-6.6` | the compatibility route uses the core's historical child/root handoff; `RMD_CORE66_TRANSACTIONAL_ROUTE` uses a checked private-credential transaction and the authenticated sealed-helper contract |
 | `core612` | `android16-6.12` | swaps the exploit process's own cred and reloads the SELinux policy, then execs the helper directly |
 | `core510` | `5.10` — not a GKI branch at all, but Meta's own kernel for Quest 3 | swaps a forked *child*'s cred and clears that child's seccomp filter through the same write; the child execs the helper |
 
@@ -25,40 +25,30 @@ KASLR slide does not come from `perf_event_open`: SELinux gives `untrusted_app`
 no `perf_event` class, so the slide is read back through a sysctl the exploit's
 own write re-points. `CVE43499_SLIDE=perf|stamp|auto` forces either route.
 
-The 6.6 and 6.12 cores arrive at the same place — root, SELinux permissive, helper not yet
-running — so what follows is one implementation, `root_helper.c`, and each of
-their `root.c` is the seam that calls it. `core61` links none of it.
+`core66`'s compatibility route and `core612` share `root_helper.c`. Other
+handoffs remain in their core's `root.c`.
 
 ## What is a core's, and what is this repository's
 
-No core is this repository's own work and none is edited to resemble another, so
-a fix can be taken from the work it follows and no kernel's constants can leak
-into another kernel's tree. What is this repository's own is the glue around
-them — `<core>/root.c`, `mte.c`, `preload.c` and `payload.h`, described under
-[Layout](../README.md#layout).
+Each core starts from the implementation named in
+[Credits](../README.md#credits). Devices on the same kernel series share it;
+exact constants and compile-time capability selections stay in target headers.
+Repository-owned integration includes `<core>/root.c`, `mte.c`, `preload.c`
+and `payload.h`.
 
-A core's own code stays in that core's directory, `root.c` included: it is the
-one file under `src/payloads/<payload>/<core>/` that this repository wrote
-itself. Where the work a core follows has a file by that name, there it is that
-exploit's own last stage rather than this seam, and the app glue it carries —
-`preload.c`, `su_daemon.c`, an `.incbin` blob — has no counterpart here at all.
-So bringing a core up to date is still "replace everything there but `root.c`",
-and the build lists it apart from the rest of the core for the same reason.
+## Shared-core capability routes
 
-## Deltas against the work a core follows
+Unflagged targets compile the compatibility route. Current opt-ins are:
 
-Each core carries deltas against the work it follows. The ones that change what
-a run does are gated on a macro whose default is what that work does — so a
-target that names none of them behaves the way its reference does — and what each
-is and why it was needed sits beside its gate in the source.
+| Capability | Scope | Meaning |
+| --- | --- | --- |
+| `RMD_CORE61_DIRECT_CRED_ROUTE` | `core61` | uses the verified direct task/cred handoff and waiter cleanup route |
+| `RMD_CORE66_TRANSACTIONAL_ROUTE` | `core66` | uses the checked transactional cleanup/root handoff route |
+| `RMD_SUPERVISOR_RETRY_STATE` | shared supervisor | persists one-shot retry state between managed app attempts |
+| `RMD_SUPERVISOR_DIRTY_GUARD` | shared supervisor | refuses a new managed attempt after an unsafe partial state |
 
-The rest are ungated because the reference names something this repository does
-not have. `core66` has all three of those: a bootstrap mode reaching into a file
-that has no counterpart here, an include macro spelled the way `core612` spells
-it, and the check at the end of `run_exploit()`, which a reference answers with
-an embedded `su` binary where it fills that seam at all. The helper here is a separate artifact and promises a socket rather than a
-path, so the check asks the socket. A gate would not help: the default side of it would be a probe
-for a file no build of this repository produces.
+Capability names describe behavior, not devices. Target-only constants belong
+in the target header; build metadata belongs in optional `build.mk`.
 
 ## What to check after building
 

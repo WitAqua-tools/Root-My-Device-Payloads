@@ -1,0 +1,29 @@
+{
+  "$comment": [
+    "The KernelSU late-load build this target would pair with. CI rebuilds it",
+    "from the src/kernelsu submodule; nothing is committed as a binary.",
+    "",
+    "'id' names the published assets (ksud-<id>, kernelsu-<id>.ko). Targets that",
+    "load the same module share one id and are built once.",
+    "",
+    "'kernelRelease' is the exact UTS release the module must report in its",
+    "vermagic. The DDK image ships its own release string, so the build",
+    "overwrites the generated utsrelease.h and kernel.release with this value",
+    "before compiling.",
+    "",
+    "'patchSets' names the patch sets this build takes on top of common, as",
+    "directories under the patch submodule's patches/<version>/. Asteroids",
+    "takes devices/asteroids in addition to common. Nothing OS has no",
+    "KDP/RKP/DEFEX; the device set recreates the zygote-start boundary only",
+    "after late-load-compatible module setup, mounts and post-mount are complete.",
+    "It is selected by the explicit --modules path, not by a hard-coded Zygisk ID."
+  ],
+  "id": "asteroids",
+  "kmi": "android14-6.1",
+  "ddkImage": "ghcr.io/ylarod/ddk-min:android14-6.1-20260313",
+  "kernelRelease": "6.1.157-android14-11-g82d681c9b06b-ab14634535",
+  "patchSets": [
+    "devices/asteroids"
+  ],
+  "config": []
+}

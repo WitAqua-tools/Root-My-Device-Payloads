@@ -8,10 +8,13 @@
  * APK for every target, so nothing here may know which device it is running
  * on. What used to sit in su_daemon.c and did know is now separated out:
  *
- *   late_load.c  everything that knows KernelSU exists. The KMI and the
- *                manager package are the target's, and arrive as arguments
- *                rather than being compiled in.
- *   hold_refs.c  the kernel-page reference holder, which exists for core66
+ *   late_load.c         protocol dispatcher; selection is an explicit request
+ *                       word and never a device/model/KMI allowlist.
+ *   late_load_legacy.c  the historical KernelSU late-load contract.
+ *   late_load_sealed.c  the opt-in authenticated completion contract.
+ *                       KMI and manager package arrive as arguments rather
+ *                       than being compiled in.
+ *   hold_refs.c         the kernel-page reference holder, which exists for core66
  *                alone and is dead weight on any other core.
  *
  * su_daemon.c is then a plain su daemon: a protocol, a uid check, and exec.
@@ -72,9 +75,10 @@ int wait_status(pid_t pid);
 void close_request_fds(struct su_request *request);
 
 /*
- * late_load.c. Serves `su --late-load <kmi> <package>`: bind-mounts the staged
- * ksud over a binary it may exec, runs it, and checks the module answered.
- * Both arguments are the target's and are required -- see the file.
+ * late_load.c dispatches `su --late-load <kmi> <package> [allow-shell]
+ * [modules] [run-id=<32-lowercase-hex>]`.  The historical path remains the
+ * default.  `modules` plus `run-id` explicitly opts into the sealed completion
+ * protocol.  Both target values are required and remain run-time arguments.
  */
 int su_run_late_load(struct su_request *request, int conn);
 
@@ -84,7 +88,8 @@ int su_run_late_load(struct su_request *request, int conn);
  * client prints the outcome from the status rather than the daemon printing it
  * down descriptors that stop working mid-operation. See late_load.c.
  */
-void su_late_load_report(int status, int fd);
+void su_late_load_report(int status, int fd, uint32_t argc,
+                         char *const *argv);
 
 /*
  * hold_refs.c. Serves the 'H' opcode: takes file descriptors over the

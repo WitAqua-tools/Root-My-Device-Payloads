@@ -177,6 +177,9 @@ jobs:
         run: |
           make TARGET="$TARGET" PAYLOAD="$PAYLOAD" CORE="$CORE"
           make TARGET="$TARGET" PAYLOAD="$PAYLOAD" CORE="$CORE" release
+          echo "TARGET=$TARGET" >> "$GITHUB_ENV"
+          echo "PAYLOAD=$PAYLOAD" >> "$GITHUB_ENV"
+          echo "CORE=$CORE" >> "$GITHUB_ENV"
           echo "OUTDIR=build/${TARGET//\//_}" >> "$GITHUB_ENV"
           echo "SLUG=$(echo "$PAYLOAD" | tr 'A-Z' 'a-z')" >> "$GITHUB_ENV"
 
@@ -186,7 +189,9 @@ jobs:
       # blob and a mismatch is a runtime failure on the device, not a build one.
       - name: Check release payload size
         run: |
-          expected=$(grep -oP '^APP_RELEASE_SIZE\s*:=\s*\K[0-9]+' Makefile)
+          expected=$(make TARGET="$TARGET" PAYLOAD="$PAYLOAD" CORE="$CORE" info \
+            | sed -n 's/^APP_RELEASE_SIZE=//p' | tail -1)
+          test -n "$expected"
           actual=$(stat -c %s "$OUTDIR/$SLUG-app.release.so")
           echo "expected=$expected actual=$actual"
           test "$actual" = "$expected"
