@@ -48,6 +48,26 @@
       "status": "the exploit chain is device-verified here through pmg110-root, a port of ghostlock-oneplus to this device; the payload this feed serves has not completed a run, and no build of it could have reported one until the root glue was wired up -- core66's run_exploit() reaches root in a forked child and then called a weak ENOSYS stub, so neither 'exploit completed' nor 'done=1 root=1' could ever be printed. kernelVersion / kernelBuildVersion are read out of boot.img rather than captured from the device"
     },
     {
+      "profileId": "oneplus-pad3-ex-16.0.9.400",
+      "payload": "CVE-2026-43499",
+      "core": "core66",
+      "device": "oneplus-pad3",
+      "region": "EX",
+      "manufacturer": "OnePlus",
+      "model": "OPD2415",
+      "marketingName": "OnePlus Pad 3",
+      "soc": "Qualcomm SM8750P",
+      "kernelRelease": "6.6.118-android15-8-g2e6b9c3812c5-ab15114928-4k",
+      "kernelVersion": "Linux version 6.6.118-android15-8-g2e6b9c3812c5-ab15114928-4k (kleaf@build-host) (Android (11368308, +pgo, +bolt, +lto, +mlgo, based on r510928) clang version 18.0.0 (https://android.googlesource.com/toolchain/llvm-project 477610d4d0d988e69dbc3fae4fe86bff3f07f2b5), LLD 18.0.0) #1 SMP PREEMPT Mon Mar 30 10:41:25 UTC 2026",
+      "kernelBuildVersion": "#1 SMP PREEMPT Mon Mar 30 10:41:25 UTC 2026",
+      "buildDisplay": "OPD2415_16.0.9.400(EX01)",
+      "buildFingerprint": "OnePlus/OPD2415IN/OP6190L1:16/AP3A.240617.008/V.R4T3.17bf73d_cf42a1_c9913b:user/release-keys",
+      "sdk": 36,
+      "abi": "arm64-v8a",
+      "pageSize": 4096,
+      "status": "Maintainer device-verified on this exact build: temporary root, KernelSU 32525 late-load, signer-matched Manager grant, SELinux enforcing restoration, and the authenticated module/zygote/Vector completion flow work. Historical evidence files retain their capture-time provenance labels."
+    },
+    {
       "profileId": "warhol-jp-OS3.0.304.0.WPSJPXM",
       "payload": "CVE-2026-43499",
       "core": "core612",
@@ -86,6 +106,26 @@
       "abi": "arm64-v8a",
       "pageSize": 4096,
       "status": "the first android14-6.1 target, and the first to name core61. The adb route (LD_PRELOAD, non-app build) roots this device end to end on the first attempt in 5 runs out of 7, each started from a boot with at least 9 minutes of uptime (two of the seven were second runs on a boot an earlier run had left alive; counting only first runs it is 4 of 5) -- the other 2 panicked in the sched_setattr punch before the R/W, so a miss costs a ~90 s reboot rather than one of the supervisor's remaining attempts, and the run after one that rooted fails on the per-uid pipe budget its resident helpers still hold: `root install done=1 root=1 uid=2000->2000 su daemon serving` -- the exploit process stays unprivileged on this route by design, that pair is its own uid and `root=1` is the flag saying the helper the kernel exec'd reached uid 0, which the summary line prints as `uid=2000->0` -- and the daemon answers `uid=0(root) ... context=u:r:kernel:s0` -- not the KernelSU that is in this device's init_boot as a debugging aid, which answers u:r:ksu:s0. Every matched field here except kernelVersion is read off the device rather than reasoned from the image, and the offsets come from that device's own boot.img; the bug is unfixed in this image and the waiter shape is the pre-split 0x58 one, both re-checked in the disassembly rather than inherited from the core's other 6.1 targets. Everything the application does after it has a payload is verified too, driven from adb: the release .so loaded through the helper's own --run-payload runner reports both markers the app requires (`exploit completed`, `done=1 root=1`) on the first attempt from a clean boot, the helper stages ksud and `--late-load android14-6.1 me.weishu.kernelsu` answers `KernelSU loaded and answering (0)`, and the manager then shows the LKM Jailbreak-mode card at version 32525-2 with SELinux back to Enforcing, the framework never restarting under any of it (system_server still the pid it took 9.6 s into boot, sixteen minutes and one late-load later) -- this is also the first android14-6.1 KernelSU build in the repository to be loaded anywhere. Only the app's two log markers are checked that way, not the runner exit status its installer also gates on, because the runner is backgrounded so the log can be streamed off before a panic. The application's own route works too, as of core61 leaking the slide through boot_id: two runs from the app on two clean Enforcing boots, first attempt each, uid 10325 in u:r:untrusted_app:s0, reached `done=1 root=1` and the manager then showed the LKM Jailbreak-mode card at 32525-2 with SELinux back to Enforcing and system_server still the pid it took 9.4 s into boot. tracefs is still EACCES from that domain (`slide tracefs setup failed errno=13`); what changed is that it is no longer fatal -- pr_error's exit(-1) was, and the run now falls through to the boot-id source. Two runs are not a rate: the slide adds a second grooming-and-punch stage to a chain whose stages land about two in three, and the app caches the slide per boot so a retry skips that stage. kernelVersion is set from this device's own /proc/version, which puts the target in the feed and its KernelSU build in the job a release waits on. What that has *not* been through is the feed path itself: every run so far read its payload from a folder on the device through the application's debug mode, so the release tag, the asset URLs anchored to it and the size checks will run for the first time when CI publishes this target, as will CI's own build of the app payload and of the android14-6.1 KernelSU pair, which has only ever been built locally. The first feed-served run is the thing to watch The temporary root itself is verified; note that a run leaves SELinux permissive until the next reboot, since nothing on this route puts it back"
+    },
+    {
+      "profileId": "asteroids-jp-B4.1-260618-1048",
+      "payload": "CVE-2026-43499",
+      "core": "core61",
+      "device": "asteroids",
+      "region": "JP",
+      "manufacturer": "Nothing",
+      "model": "A059",
+      "marketingName": "Nothing Phone (3a)",
+      "soc": "Qualcomm SM7635 (Snapdragon 7s Gen 3)",
+      "kernelRelease": "6.1.157-android14-11-g82d681c9b06b-ab14634535",
+      "kernelVersion": "Linux version 6.1.157-android14-11-g82d681c9b06b-ab14634535 (build-user@build-host) (Android (10087095, +pgo, +bolt, +lto, -mlgo, based on r487747c) clang version 17.0.2 (https://android.googlesource.com/toolchain/llvm-project d9f89f4d16663d5012e5c09495f3b30ece3d2362), LLD 17.0.2) #1 SMP PREEMPT Mon Dec 22 19:22:33 UTC 2025",
+      "kernelBuildVersion": "#1 SMP PREEMPT Mon Dec 22 19:22:33 UTC 2025",
+      "buildDisplay": "B4.1-260618-1048",
+      "buildFingerprint": "Nothing/AsteroidsJPN/Asteroids:16/BQ2A.250721.001-BP2A.250605.031.A3/2606181048:user/release-keys",
+      "sdk": 36,
+      "abi": "arm64-v8a",
+      "pageSize": 4096,
+      "status": "Maintainer device-verified on this exact build: the application route acquires temporary root, late-loads KernelSU 32525, authenticates the paired Root My Device Manager, restores SELinux enforcing, and completes the explicit module/zygote stages. Root is temporary and disappears after reboot."
     },
     {
       "profileId": "quest3-global-5.10.240-g55be3759aea4",

@@ -2,8 +2,9 @@
 
 What it takes to make one exact firmware build installable, in the order the
 questions actually come up. Written against the ports this repository has done —
-pmg110 on `android15-6.6`, warhol on `android16-6.12` and xig07 on
-`android14-6.1` — and describing the layout as it is.
+pmg110 and OnePlus Pad 3 on `android15-6.6`, warhol on `android16-6.12`,
+xig07 and Nothing Phone (3a) on `android14-6.1`, and Quest 3 on 5.10 — and
+describing the layout as it is.
 
 Per-target derivation records are **not kept here**. A target directory holds
 what the build reads and nothing else; where each number came from, what was
@@ -34,10 +35,13 @@ with different numbers.
 ## 1. Decide whether an existing core covers this kernel
 
 Read `uname -r`. If the GKI branch matches a core this repository already has,
-the port is a matter of offsets and you can skip to step 3. If it does not, the
-port needs a new core first, and that is a much larger piece of work: it is
-someone's exploit tree, not something derived from the firmware. Which cores
-exist, and what each already answers, is [`CORES.md`](CORES.md).
+the target stays on that core. Most ports then need only offsets. A verified
+behavioral difference may require a generic compile-time capability inside the
+same shared core, but never a copied core, target-private patch tree, or a
+model/manufacturer check. If the branch does not match, the port needs a new core
+first, which is a much larger piece of work: it is someone's exploit tree, not
+something derived from the firmware. Which cores exist, and what each already
+answers, is [`CORES.md`](CORES.md).
 
 Bringing in a new core, as `core612` was:
 
@@ -124,9 +128,11 @@ different port.
 
 ```text
 src/targets/<device>/<region lowercased>/<kernelRelease>/
-    target-<core>.h    the offsets, for the core that reads them
+    target-<core>.h    exact offsets and generic capability selections
+    *.h                optional exact-target tables included by that header
+    build.mk           optional build metadata, never commands or arbitrary flags
     kernelsu.json      the KernelSU build this target pairs with
-    p0_fingerprint.h   only if the core asks for one — core66 does, core612 does not
+    p0_fingerprint.h   only if the selected core asks for one
 ```
 
 The directory path is derived from `device`, `region` and `kernelRelease` in
@@ -146,6 +152,28 @@ swaps its own cred and reloads the SELinux policy, can be halfway through
 becoming root. A timeout below what a healthy attempt takes does not detect a
 hang, it manufactures one. Raise either only after a retry has been observed to
 be safe on that device.
+
+### Shared-core capability selection
+
+Keep the target on the core selected by its kernel series. When the verified
+source needs a route already represented by a generic capability in
+[`CORES.md`](CORES.md), define that capability in `target-<core>.h`. When a new
+capability is unavoidable, add it to the shared core with the compatibility
+route as the default and validate every target on that core.
+
+The boundary is strict:
+
+- target headers may provide constants and generic compile-time capabilities;
+- shared source may branch on those capabilities, never on a device/model/vendor
+  string;
+- existing targets that do not opt in must retain their compatibility route;
+- do not copy `core61` or `core66`, and do not create a target-only source patch;
+- `build.mk` may set declarative build metadata such as `APP_RELEASE_SIZE`; it
+  may not run commands or replace source paths.
+
+OnePlus Pad 3 needs a 196608-byte padded app artifact, while the repository
+default remains 104128 bytes. That difference is therefore one line in its
+`build.mk`, not a device conditional in the Makefile.
 
 ## 6. Add the `src/targets.json` entry
 
@@ -193,8 +221,10 @@ make TARGET=<device>/<region>/<kernelRelease> PAYLOAD=CVE-2026-43499 \
 make TARGET=… PAYLOAD=… CORE=… release
 ```
 
-Four checks, each catching something that otherwise fails on the device rather
-than in the build:
+Run both new targets and every pre-existing target that shares their cores.
+That means at least Nothing Phone (3a) plus XIG07 for `core61`, and OnePlus Pad 3
+plus PMG110 for `core66`; the full CI matrix remains the preferred check. Four
+checks catch failures that would otherwise appear only on the device:
 
 ```sh
 out=build/<target with / as _>

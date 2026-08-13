@@ -24,8 +24,10 @@ Use only on devices you own or are explicitly authorized to test.
 | Target | Core | Device | SoC | Region | Firmware | Kernel | Fingerprint | Status |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `pmg110-cn-16.0.9.400` | `core66` | OPPO PMG110 / K15 Pro+ | MediaTek MT6991 | CN | `PMG110_16.0.9.400(CN01)` | `6.6.118-android15-8-g93e223c276e7-abogki500782043-4k` (`android15-6.6`, 4K pages) | `OPPO/PMG110/OP61E5L1:16/BP2A.250605.015/B.c24acd_188efc3_187038b:user/release-keys` | Exploit core device-verified on this firmware outside this repository; the feed entry ships, but the payload built here has not completed a run, and until its root glue was wired up no build of it could have reported one. |
+| `oneplus-pad3-ex-16.0.9.400` | `core66` | OnePlus Pad 3 (OPD2415) | Qualcomm SM8750P | EX | `OPD2415_16.0.9.400(EX01)` | `6.6.118-android15-8-g2e6b9c3812c5-ab15114928-4k` (`android15-6.6`, 4K pages) | `OnePlus/OPD2415IN/OP6190L1:16/AP3A.240617.008/V.R4T3.17bf73d_cf42a1_c9913b:user/release-keys` | Maintainer device-verified: app-route temporary root, KernelSU `32525`, signer-matched manager grant, SELinux enforcing restoration, and authenticated module/zygote/Vector completion. |
 | `warhol-jp-OS3.0.304.0.WPSJPXM` | `core612` | Xiaomi 17T Pro | MediaTek MT6993 | JP | `OS3.0.304.0.WPSJPXM` | `6.12.38-android16-5-g1d46253471dd-ab15048002-4k` (`android16-6.12`, 4K pages) | `Xiaomi/warhol_jp/warhol:16/BP2A.250605.031.A3/OS3.0.304.0.WPSJPXM:user/release-keys` | Working from the app, KernelSU `32525-2`. |
 | `xig07-jp-OS3.0.7.0.WNEJPKD` | `core61` | Xiaomi 14T (au XIG07) | MediaTek MT6897 | JP | `OS3.0.7.0.WNEJPKD` | `6.1.138-android14-11-g44bda9e8f6e9-ab13792638` (`android14-6.1`, 4K pages) | `Xiaomi/XIG07_jp_kdi/XIG07:16/BP2A.250605.031.A3/OS3.0.7.0.WNEJPKD:user/release-keys` | Working from the app, KernelSU `32525-2`; nothing has been served through the feed yet. |
+| `asteroids-jp-B4.1-260618-1048` | `core61` | Nothing Phone (3a) (A059) | Qualcomm SM7635 | JP | `B4.1-260618-1048` | `6.1.157-android14-11-g82d681c9b06b-ab14634535` (`android14-6.1`, 4K pages) | `Nothing/AsteroidsJPN/Asteroids:16/BQ2A.250721.001-BP2A.250605.031.A3/2606181048:user/release-keys` | Maintainer device-verified: app-route temporary root, KernelSU `32525`, paired-manager authentication, SELinux enforcing restoration, and explicit module/zygote completion. |
 | `quest3-global-5.10.240-g55be3759aea4` | `core510` | Meta Quest 3 (eureka) | Qualcomm SXR2230P | GLOBAL | `UP1A.231005.007.A1` | `5.10.240-g55be3759aea4` (Meta's own 5.10, not a GKI branch, 4K pages) | `oculus/eureka/eureka:14/UP1A.231005.007.A1/52345320035400520:user/abl_signing_keys:release,amss_signing_keys:release,release-keys` | Working from the app, KernelSU loaded and answering; its module is built from Meta's own kernel source rather than a DDK image. |
 
 Targets are exact-firmware targets. A matching model with a different build is
@@ -51,11 +53,12 @@ core with different offsets — and each target names the one it needs in
 | `core612` | `android16-6.12` |
 | `core510` | `5.10` (not a GKI branch) |
 
-What each core is, how it reaches root, what it carries against the work it
-follows, how a boot's kernel-MTE answer is decided, and how to add a core are in
-[`docs/CORES.md`](docs/CORES.md). No core is this repository's own work; the
-published implementation each one was written against, with links, is in
-[Credits](#credits). What *is* this repository's own is the glue around them, in
+What each core is, how it reaches root, which target-selected capability
+routes it exposes, how a boot's kernel-MTE answer is decided, and how to add a
+core are in [`docs/CORES.md`](docs/CORES.md). The imported baselines and their
+published references are in [Credits](#credits). Repository-owned integration
+code, including the compile-time capability seams that keep targets on the same
+core without testing model or manufacturer names, is described in
 [Layout](#layout).
 
 ## Layout
@@ -63,41 +66,51 @@ published implementation each one was written against, with links, is in
 ```text
 src/targets.json                      every target, and the only hand-authored feed input
 src/targets/<device>/<region>/<kernel release>/
-                     target-<core>.h  offsets recovered from that exact firmware,
-                                      for the core that reads them
-                     p0_fingerprint.h optional, and only core61 reads it
+                     target-<core>.h  exact offsets plus generic compile-time
+                                      capability selections for that core
+                     *.h              optional exact-target tables included by
+                                      target-<core>.h
+                     build.mk         optional build metadata such as the fixed
+                                      padded app artifact size
+                     p0_fingerprint.h optional, and only where the selected core reads it
                      kernelsu.json    the KernelSU build this target pairs with,
                                       and the patch sets that build takes
 src/payloads/<payload>/               one directory per exploit
-                     core66/          the 6.6 core
-                       root.c         which of the two routes below this core
-                                      hands over on, and this repository's own
-                     core612/         the 6.12 core
-                       root.c         the same seam for that core
-                     core510/         the 5.10 core
-                       root.c         the same seam for that core
+                     core61/          the shared android14-6.1 core
+                       root.c         that core's repository-owned root handoff seam
+                     core66/          the shared android15-6.6 core
+                       root.c         that core's repository-owned root handoff seam
+                     core612/         the shared android16-6.12 core
+                       root.c         that core's repository-owned root handoff seam
+                     core510/         the shared 5.10 core
+                       root.c         that core's repository-owned root handoff seam
                        exp32/         its 32-bit stage, built as its own
                                       artifact and carried in the payload
                      root_helper.c    getting the helper resident from a context
-                                      that is already root, init hijack
-                                      included; linked into the cores that
-                                      reach one
+                                      that is already root, init hijack included
                      mte.c            whether this boot's kernel tags heap pointers
-                     preload.c        the retry supervisor, shared by all
-                     payload.h        what those agree on
-src/payloads/su_daemon/               the bootstrap helper the app ships in its APK
-                     su_daemon.c      the su daemon: protocol, uid check, exec
-                     late_load.c      all it knows about KernelSU
+                     preload.c        the shared retry/attempt supervisor; exact
+                                      targets may select generic supervisor capabilities
+                     payload.h        the interface between core, supervisor and glue
+src/payloads/su_daemon/               the target-independent bootstrap helper
+                     su_daemon.c      protocol, uid check and command dispatch
+                     late_load.c      explicit legacy/sealed late-load dispatcher
+                     late_load_legacy.c
+                                      the historical KernelSU contract
+                     late_load_sealed.c
+                                      authenticated transactional completion
                      hold_refs.c      core66's kernel-page reference holder
-                     su_daemon.h      the seam between those three
+                     su_daemon.h      the seam between those parts
 src/kernelsu/                         KernelSU submodule, patch submodule and audit tools
 ```
 
-A target's directory, its header and its root glue are all derived from
-`src/targets.json` rather than written down twice —
-[`docs/PORTING.md`](docs/PORTING.md) step 5. The two markers the application
-refuses an install without, and which piece of the payload prints each, are
-step 10 of the same document.
+A target's directory and header name are derived from `src/targets.json`
+rather than written down twice — [`docs/PORTING.md`](docs/PORTING.md) step 5.
+Targets sharing `core61` or `core66` compile the same core directory. Exact
+firmware selects only generic compile-time capabilities and constants from its
+target header; shared code never branches on a device, model or manufacturer
+string. The two markers the application refuses an install without, and which
+piece of the payload prints each, are step 10 of the same document.
 
 ## Feed delivery
 
@@ -154,10 +167,12 @@ cve-2026-43499-root
 that is not named after the core.
 
 `release` is the one the feed publishes: it is size-checked and then padded to
-the fixed `APP_RELEASE_SIZE` the app expects. `cve-2026-43499-root` is the
-bootstrap helper the app ships inside its APK; every target's build of it is the
-same binary, and [`docs/FEED.md`](docs/FEED.md) says why that has to stay true
-and why it is published here at all.
+`APP_RELEASE_SIZE`. The shared default is 104128 bytes; a target that genuinely
+needs another fixed size declares only that value in its optional `build.mk`.
+The Makefile does not test a device name. `cve-2026-43499-root` is the bootstrap
+helper the app ships inside its APK; every target's build of it is the same
+binary, and [`docs/FEED.md`](docs/FEED.md) says why that has to stay true and why
+it is published here at all.
 
 What to check on a build before trusting it — the release size, undefined
 symbols, the root glue, and that helper's hash — is

@@ -1,0 +1,18 @@
+{
+  "$comment": [
+    "The exact android15-6.6 late-load build paired with OPD2415 EX01.",
+    "The Manager certificate is supplied before compilation; its package, DER",
+    "size and SHA-256 are compiled into kernelsu.ko and the final APK is signed",
+    "with the same key. The Pad 3 device set adds checked zygote/system_server",
+    "replacement, post-zygote exact-once service receipts, Vector adaptation,",
+    "and a root-private hash/inode-pinned ksud handoff on top of common."
+  ],
+  "id": "oneplus-pad3",
+  "kmi": "android15-6.6",
+  "ddkImage": "ghcr.io/ylarod/ddk-min:android15-6.6-20260313",
+  "kernelRelease": "6.6.118-android15-8-g2e6b9c3812c5-ab15114928-4k",
+  "patchSets": [
+    "devices/oneplus-pad3"
+  ],
+  "config": []
+}

