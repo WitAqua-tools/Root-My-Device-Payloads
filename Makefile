@@ -13,6 +13,7 @@ PAYLOAD ?= CVE-2026-43499
 #   core66   android15-6.6, from pmg110-root
 #   core612  android16-6.12, from warhol-root (upstream popsicle plus its MTE fix)
 #   core510  5.10 (Meta's own kernel, not a GKI branch), from IonStackQuest3
+#   core515  android13-5.15, from Root-My-Galaxy-Payloads (zainarbani's tree)
 #
 # It is declared per target in src/targets.json and CI passes it down, so the
 # default here only matters for a hand-typed build.
@@ -150,6 +151,18 @@ CORE_SRCS += $(if $(filter $(CORE),core510),\
 # needs a key adbd already trusts and adbd already on TCP, neither of which an
 # application on a user's device can arrange.
 CORE_SRCS += $(if $(filter $(CORE),core66),$(CORE_DIR)/miniadb.c)
+
+# core515 splits the chain the same way the reference tree it follows does:
+# one file per stack-copy route (pselect, mcast, fpsimd), the slide sources
+# (slide.c's tracefs, slide_app.c's oracle fallback and forced-offset entry),
+# the reclaimed-page builder and the P0 oracle that gate/probe it.
+CORE_SRCS += $(if $(filter $(CORE),core515),\
+  $(CORE_DIR)/slide_app.c \
+  $(CORE_DIR)/pselect.c \
+  $(CORE_DIR)/mcast.c \
+  $(CORE_DIR)/fpsimd.c \
+  $(CORE_DIR)/page.c \
+  $(CORE_DIR)/oracle.c)
 
 # Which cores reach a root context of their own and so install the helper from
 # user space. core61 does not: it has the kernel exec the helper through a

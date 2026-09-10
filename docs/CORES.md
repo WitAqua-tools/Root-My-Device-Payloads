@@ -11,6 +11,7 @@ offsets — and each target names the one it needs in `src/targets.json`.
 | `core66` | `android15-6.6` | swaps a forked *child*'s cred; that child is root and execs the helper itself |
 | `core612` | `android16-6.12` | swaps the exploit process's own cred and reloads the SELinux policy, then execs the helper directly |
 | `core510` | `5.10` — not a GKI branch at all, but Meta's own kernel for Quest 3 | swaps a forked *child*'s cred and clears that child's seccomp filter through the same write; the child execs the helper |
+| `core515` | `android13-5.15` | reaches no root context in user space either: it splices a forged work item onto the `system_unbound_wq` worklist and the kernel execs the helper |
 
 The published implementation each core was written against, with links, is in
 [Credits](../README.md#credits).
@@ -27,7 +28,7 @@ own write re-points. `CVE43499_SLIDE=perf|stamp|auto` forces either route.
 
 The 6.6 and 6.12 cores arrive at the same place — root, SELinux permissive, helper not yet
 running — so what follows is one implementation, `root_helper.c`, and each of
-their `root.c` is the seam that calls it. `core61` links none of it.
+their `root.c` is the seam that calls it. `core61` and `core515` link none of it.
 
 ## What is a core's, and what is this repository's
 
