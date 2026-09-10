@@ -26,6 +26,7 @@ Use only on devices you own or are explicitly authorized to test.
 | `pmg110-cn-16.0.9.400` | `core66` | OPPO PMG110 / K15 Pro+ | MediaTek MT6991 | CN | `PMG110_16.0.9.400(CN01)` | `6.6.118-android15-8-g93e223c276e7-abogki500782043-4k` (`android15-6.6`, 4K pages) | `OPPO/PMG110/OP61E5L1:16/BP2A.250605.015/B.c24acd_188efc3_187038b:user/release-keys` | Exploit core device-verified on this firmware outside this repository; the feed entry ships, but the payload built here has not completed a run, and until its root glue was wired up no build of it could have reported one. |
 | `warhol-jp-OS3.0.304.0.WPSJPXM` | `core612` | Xiaomi 17T Pro | MediaTek MT6993 | JP | `OS3.0.304.0.WPSJPXM` | `6.12.38-android16-5-g1d46253471dd-ab15048002-4k` (`android16-6.12`, 4K pages) | `Xiaomi/warhol_jp/warhol:16/BP2A.250605.031.A3/OS3.0.304.0.WPSJPXM:user/release-keys` | Working from the app, KernelSU `32525-2`. |
 | `xig07-jp-OS3.0.7.0.WNEJPKD` | `core61` | Xiaomi 14T (au XIG07) | MediaTek MT6897 | JP | `OS3.0.7.0.WNEJPKD` | `6.1.138-android14-11-g44bda9e8f6e9-ab13792638` (`android14-6.1`, 4K pages) | `Xiaomi/XIG07_jp_kdi/XIG07:16/BP2A.250605.031.A3/OS3.0.7.0.WNEJPKD:user/release-keys` | Working from the app, KernelSU `32525-2`; nothing has been served through the feed yet. |
+| `corot-ru-OS3.0.301.0.WMLRUXM` | `core515` | Xiaomi 13T Pro | MediaTek MT6985 | RU | `OS3.0.301.0.WMLRUXM` | `5.15.180-android13-8-00021-g46a5565a0982-ab13743836` (`android13-5.15`, 4K pages) | `Xiaomi/corot_ru/corot:16/BP2A.250605.031.A3/OS3.0.301.0.WMLRUXM:user/release-keys` | Working from the app on the oracle slide source, KernelSU `32601-2`; `/proc/version` not yet captured off the device, so it stays out of the feed. |
 | `quest3-global-5.10.240-g55be3759aea4` | `core510` | Meta Quest 3 (eureka) | Qualcomm SXR2230P | GLOBAL | `UP1A.231005.007.A1` | `5.10.240-g55be3759aea4` (Meta's own 5.10, not a GKI branch, 4K pages) | `oculus/eureka/eureka:14/UP1A.231005.007.A1/52345320035400520:user/abl_signing_keys:release,amss_signing_keys:release,release-keys` | Working from the app, KernelSU loaded and answering; its module is built from Meta's own kernel source rather than a DDK image. |
 
 Targets are exact-firmware targets. A matching model with a different build is
@@ -50,6 +51,7 @@ core with different offsets — and each target names the one it needs in
 | `core66` | `android15-6.6` |
 | `core612` | `android16-6.12` |
 | `core510` | `5.10` (not a GKI branch) |
+| `core515` | `android13-5.15` |
 
 What each core is, how it reaches root, what it carries against the work it
 follows, how a boot's kernel-MTE answer is decided, and how to add a core are in
@@ -65,7 +67,7 @@ src/targets.json                      every target, and the only hand-authored f
 src/targets/<device>/<region>/<kernel release>/
                      target-<core>.h  offsets recovered from that exact firmware,
                                       for the core that reads them
-                     p0_fingerprint.h optional, and only core61 reads it
+                     p0_fingerprint.h optional, and only core61 and core515 read it
                      kernelsu.json    the KernelSU build this target pairs with,
                                       and the patch sets that build takes
 src/payloads/<payload>/               one directory per exploit
@@ -78,6 +80,8 @@ src/payloads/<payload>/               one directory per exploit
                        root.c         the same seam for that core
                        exp32/         its 32-bit stage, built as its own
                                       artifact and carried in the payload
+                     core515/         the 5.15 core
+                       root.c         the same seam for that core
                      root_helper.c    getting the helper resident from a context
                                       that is already root, init hijack
                                       included; linked into the cores that
@@ -204,6 +208,7 @@ published implementation of that exploit as its reference:
 | `core61` | [BuSung-dev/Root-My-Galaxy-Payloads](https://github.com/BuSung-dev/Root-My-Galaxy-Payloads) |
 | `core66` | [JoinChang/ghostlock-oneplus](https://github.com/JoinChang/ghostlock-oneplus) |
 | `core612` | [x-spy/CVE-2026-43499-popsicle](https://github.com/x-spy/CVE-2026-43499-popsicle) |
+| `core515` | [zainarbani/Root-My-Galaxy-Payloads](https://github.com/zainarbani/Root-My-Galaxy-Payloads) |
 
 The `kernelsnitch/` directory under each core is the software-only timing side
 channel published as

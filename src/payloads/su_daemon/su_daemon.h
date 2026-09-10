@@ -92,4 +92,12 @@ void su_late_load_report(int status, int fd);
  */
 void su_hold_kernel_references(int conn);
 
+/*
+ * Also hold_refs.c, for core515: the 'h' opcode takes one to eight
+ * descriptors -- the count arrives on the SCM_RIGHTS control message -- and
+ * otherwise behaves identically. Either opcode may arrive first; both answer
+ * for the same ready socket.
+ */
+void su_hold_exploited_references(int conn);
+
 #endif

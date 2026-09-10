@@ -1,0 +1,32 @@
+{
+  "$comment": [
+    "The KernelSU late-load build this target pairs with. CI rebuilds it",
+    "from the src/kernelsu submodule; nothing is committed as a binary.",
+    "",
+    "'id' names the published assets (ksud-<id>, kernelsu-<id>.ko). Targets that",
+    "load the same module share one id and are built once.",
+    "",
+    "'kernelRelease' is the exact UTS release the module must report in its",
+    "vermagic. The DDK image ships its own release string, so the build",
+    "overwrites the generated utsrelease.h and kernel.release with this value",
+    "before compiling.",
+    "",
+    "Built, audited and loaded. The first android13-5.15 module in the",
+    "repository was built from this image tag with the common patch set at",
+    "v3.3.0 -- module version 32601, manager constants compiled in for",
+    "org.witaqua.pwn.kernelsu -- audited against the target's own vmlinux",
+    "(0 missing symbols, 0 CRC mismatches, no __version entries; kallsyms",
+    "resolves the rest at load time) and loaded on the device through ksud's",
+    "late-load, after which the manager showed 32601-2 and ksud put SELinux",
+    "back to Enforcing. patchSets stayed empty as expected: HyperOS has no",
+    "KDP/RKP/DEFEX. The target's kernelVersion is null only because the",
+    "device's /proc/version has not been captured yet; filling it in is what",
+    "puts this pair in the job a release waits on."
+  ],
+  "id": "corot",
+  "kmi": "android13-5.15",
+  "ddkImage": "ghcr.io/ylarod/ddk-min:android13-5.15-20260313",
+  "kernelRelease": "5.15.180-android13-8-00021-g46a5565a0982-ab13743836",
+  "patchSets": [],
+  "config": []
+}
