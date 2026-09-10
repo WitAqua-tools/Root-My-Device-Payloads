@@ -645,13 +645,18 @@ static void serve_one(int conn) {
 
   char operation = 0;
   if (recv(conn, &operation, sizeof(operation), MSG_PEEK) ==
-          (ssize_t)sizeof(operation) &&
-      operation == 'H') {
-    if (!read_full(conn, &operation, sizeof(operation))) {
+      (ssize_t)sizeof(operation)) {
+    if (operation == 'H' || operation == 'h') {
+      if (!read_full(conn, &operation, sizeof(operation))) {
+        return;
+      }
+      if (operation == 'H') {
+        su_hold_kernel_references(conn);
+      } else {
+        su_hold_exploited_references(conn);
+      }
       return;
     }
-    su_hold_kernel_references(conn);
-    return;
   }
 
   struct su_request request;
