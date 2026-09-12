@@ -120,9 +120,22 @@
 #define TASK_SECCOMP_OFF                   0x860
 #define TASK_TASKS_OFF                     0x4D0
 #define TASK_TGID_OFF                      0x5DC
+#define TASK_THREAD_INFO_FLAGS_OFF         0x00
 #define WAITER_LOCK_OFF                    0x38
 #define WAITER_TASK_OFF                    0x30
 #define WAITER_WAKE_STATE_OFF              0x40
 #define WAITER_WW_CTX_OFF                  0x50
+
+/* ------------------------------------------- kernel bit flags -------------- */
+#define TIF_SECCOMP_BIT                    8
+#define PFA_NO_NEW_PRIVS_BIT               1
+
+/* ------------------------------------------- SELinux struct offsets -------- */
+#define SELINUX_CRED_BLOB_OFF              0x00
+#define SELINUX_CRED_OSID_OFF              0x00
+#define SELINUX_CRED_SID_OFF               0x04
+
+/* ------------------------------------------- helper path ------------------- */
+#define ROOT_HELPER_PATH "/system/xbin/su"
 
 #endif /* TARGET_H */
