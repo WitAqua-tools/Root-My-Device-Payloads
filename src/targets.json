@@ -90,7 +90,7 @@
     {
       "profileId": "topaz-ru-5.15.194-gf4321180a397",
       "payload": "CVE-2026-43499",
-      "core": "core515",
+      "core": "core510",
       "device": "topaz",
       "region": "RU",
       "manufacturer": "Xiaomi",
