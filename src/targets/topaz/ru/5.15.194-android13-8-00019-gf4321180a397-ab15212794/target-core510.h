@@ -215,6 +215,7 @@
  * Алиасы для подсистемы обхода рандомизации адресов ядра ядра 5.15
  */
 #define SLIDE_SYSCTL_BOOTID_OFF            0x02DD6819ULL
+#define FAKE_WAITER_DEADLINE_OFF           0x48
 #define SLIDE_LOGGERS_0_1_OFF              0x02B11D68ULL
 #define SLIDE_NFULNL_LOGGER_OFF            0x02B11E30ULL
 
