@@ -152,6 +152,7 @@
  */
 #define LOCK_OFF                           0x0E80
 #define W0_OFF                             0x1180
+#define FOPS_TABLE_OFF                     FOPS_OFF
 #define FOPS_OFF                           0x0F80
 #define SCRATCH_OFF                        0x1200
 #define RIGHT_OFF                          0x1240
