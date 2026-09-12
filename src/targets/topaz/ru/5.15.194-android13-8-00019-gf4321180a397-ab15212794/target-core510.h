@@ -185,4 +185,31 @@
  */
 #define PIPE_BUF_FLAG_CAN_MERGE            0x10
 
+/* ------------------------------------------- config.c aliases -------------- 
+ * Соответствие внутренних имён функций core510 и оффсетов kallsyms
+ */
+#define KIMAGE_TEXT_BASE_DEFAULT           0xffffffc008000000ULL
+
+#define ASHMEM_MISC_FOPS_OFF               0x02CA1C80ULL
+#define ASHMEM_FOPS_OFF                    0x02108528ULL
+#define ASHMEM_IOCTL_OFF                   0x011455B0ULL
+#define ASHMEM_COMPAT_IOCTL_OFF            0x01145C60ULL
+#define ASHMEM_MMAP_OFF                    0x01145CC0ULL
+#define ASHMEM_OPEN_OFF                    0x01145FB0ULL
+#define ASHMEM_RELEASE_OFF                 0x01146050ULL
+#define ASHMEM_SHOW_FDINFO_OFF             0x01146174ULL
+
+/* На ядрах 5.15 ashmem использует универсальный read_iter */
+#define ASHMEM_READ_ITER_OFF               0x00679B90ULL
+#define CONFIGFS_READ_FILE_OFF             0x00679B90ULL
+#define CONFIGFS_WRITE_BIN_FILE_OFF        0x00679EBCULL
+#define NOOP_LLSEEK_OFF                    0x0055381CULL
+
+/* Драйвер random в GKI обычно не переопределяется, оставляем 0 */
+#define RANDOM_MISC_FOPS_OFF               0ULL
+
+/* copy_splice_read_off равен 0 из-за инлайнинга в 5.15 */
+#define COPY_SPLICE_READ_OFF               0ULL
+
+
 #endif /* TARGET_H */
