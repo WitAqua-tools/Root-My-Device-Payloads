@@ -118,16 +118,21 @@
 /* ------------------------------------------------------------ kernel MTE ---
  * Kernel heap pointers carry a tag in bits [59:56] when KASAN_HW_TAGS is
  * active. This kernel has CONFIG_KASAN_HW_TAGS=y and CONFIG_ARM64_MTE=y
- * compiled in, and the unit this port was brought up on *boots* with them on:
- * /proc/cmdline carries kasan.* options, AT_HWCAP2 has HWCAP2_MTE, and an
- * untagged sweep fails the mm_struct leak every time while a tagged one finds
- * it on the first attempt.
+ * compiled in, but the shipping firmware OS3.0.301.0.WOSJPXM *boots with them
+ * off*: its /proc/cmdline carries `arm64.nomte` (read on the device through the
+ * exploit's own root, alongside kasan.stacktrace=off / kasan.page_alloc.sample),
+ * AT_HWCAP2 has no HWCAP2_MTE, and every run so far took the untagged sweep and
+ * found the mm_struct leak that way -- attempt 2/16 on the standalone build and
+ * 1/24 on the release .so, both from u:r:shell:s0. The tagged path is therefore
+ * *unexercised on this hardware*; PERF_FIND_TASK_TAGGED and PAGE_PTR_MATCH_ALL_TAG
+ * below are carried against the case a boot with MTE on would present, from the
+ * disassembly and from the other MT6991 port, not from a run here.
  *
- * That is a fact about a boot, not about this firmware. A klimt can come up
- * either way, so this header refuses to answer and mte.c answers per boot --
- * KS_MTE_PER_BOOT, the same shape warhol's core612 header uses and for the
- * same reason. Pinning it would be wrong in both directions: pinned to 0 on a
- * tagging boot nothing is ever found, and pinned to 1 on a non-tagging boot
+ * A klimt kernel could still come up tagged (a userdebug build, or a cmdline
+ * without arm64.nomte), so this header refuses to answer and mte.c answers per
+ * boot -- KS_MTE_PER_BOOT, the same shape warhol's core612 header uses and for
+ * the same reason. Pinning it would be wrong in both directions: pinned to 0 on
+ * a tagging boot nothing is ever found, and pinned to 1 on a non-tagging boot
  * the sweep tries 15 tags that cannot be there, which multiplies the chance a
  * wrong (address, tag) pair satisfies the collision constraints -- and a wrong
  * base is a wild write, not a retry. GHOSTLOCK_MTE=0/1 still forces it. */
