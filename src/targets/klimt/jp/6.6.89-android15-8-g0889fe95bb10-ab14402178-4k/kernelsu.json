@@ -1,0 +1,33 @@
+{
+  "$comment": [
+    "The KernelSU late-load build this target pairs with. CI rebuilds it from",
+    "the src/kernelsu submodule; nothing is committed as a binary.",
+    "",
+    "'id' names the published assets (ksud-<id>, kernelsu-<id>.ko). Targets that",
+    "load the same module share one id and are built once. klimt takes its own:",
+    "the module's vermagic has to be klimt's kernel release, and the other",
+    "android15-6.6 target here is a different sublevel.",
+    "",
+    "'kernelRelease' is the exact UTS release the module must report in its",
+    "vermagic. The DDK image ships its own release string, so the build",
+    "overwrites the generated utsrelease.h and kernel.release with this value",
+    "before compiling.",
+    "",
+    "'patchSets' names the patch sets this build takes on top of common. klimt",
+    "takes none: the only vendor set that exists is 'galaxy', for Samsung's",
+    "KDP/RKP/DEFEX, and HyperOS has none of the three -- which is the same",
+    "reason the other Xiaomi target here names none. That is an argument from",
+    "what the sets contain, not a measurement on klimt: nothing has late-loaded",
+    "a module on this device yet.",
+    "",
+    "'config' is passed to the module build as-is. It gates code inside a patch",
+    "set, so it goes with one: with no set named here there is nothing to gate."
+  ],
+  "id": "klimt",
+  "kmi": "android15-6.6",
+  "ddkImage": "ghcr.io/ylarod/ddk-min:android15-6.6-20260313",
+  "kernelRelease": "6.6.89-android15-8-g0889fe95bb10-ab14402178-4k",
+  "patchSets": [],
+  "config": [],
+  "managerPackage": "me.weishu.kernelsu"
+}
