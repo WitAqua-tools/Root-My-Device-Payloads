@@ -48,6 +48,26 @@
       "status": "the exploit chain is device-verified here through pmg110-root, a port of ghostlock-oneplus to this device; the payload this feed serves has not completed a run, and no build of it could have reported one until the root glue was wired up -- core66's run_exploit() reaches root in a forked child and then called a weak ENOSYS stub, so neither 'exploit completed' nor 'done=1 root=1' could ever be printed. kernelVersion / kernelBuildVersion are read out of boot.img rather than captured from the device"
     },
     {
+      "profileId": "klimt-jp-OS3.0.301.0.WOSJPXM",
+      "payload": "CVE-2026-43499",
+      "core": "core66",
+      "device": "klimt",
+      "region": "JP",
+      "manufacturer": "Xiaomi",
+      "model": "2506BPN68R",
+      "marketingName": "Xiaomi 15T Pro",
+      "soc": "MediaTek MT6991",
+      "kernelRelease": "6.6.89-android15-8-g0889fe95bb10-ab14402178-4k",
+      "kernelVersion": null,
+      "kernelBuildVersion": null,
+      "buildDisplay": "BP2A.250605.031.A3",
+      "buildFingerprint": "Xiaomi/klimt_jp/klimt:16/BP2A.250605.031.A3/OS3.0.301.0.WOSJPXM:user/release-keys",
+      "sdk": 36,
+      "abi": "arm64-v8a",
+      "pageSize": 4096,
+      "status": "core66 on android15-6.6; offsets re-derived from klimt's own boot.img (a different sublevel from pmg110). Working from the app on a clean boot: run from u:r:untrusted_app:s0 it reaches done=1 root=1 on the first attempt -- SELINUX_UNREADABLE_MEANS_ON, PERF_FIND_TASK_TAGGED and the snapuserd_proxy init-hijack all exercised -- then KernelSU is late-loaded and answering: version 32601, module Live, SELinux back to Enforcing. The adb standalone route works too. Held out of the feed (kernelVersion null): klimt's own module builds and passes its load-time checks, but its paired ksud cannot be built while the upstream Kernel-SU deps (rustix, ksu_props, java-properties) are down, so the load used the published ksud-pmg110 as a stand-in (same android15-6.6 KMI and manager; ksuinit rewrites the vermagic to klimt's at load). Fill kernelVersion in once klimt's own ksud can be built and served. This firmware boots arm64.nomte, so the kernel-MTE path is unexercised here. Every matched field is read off the device."
+    },
+    {
       "profileId": "warhol-jp-OS3.0.304.0.WPSJPXM",
       "payload": "CVE-2026-43499",
       "core": "core612",
